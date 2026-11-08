@@ -9,6 +9,14 @@
 
 use crate::model::Score;
 
+mod engine;
+mod query;
+pub mod svg;
+#[cfg(test)]
+mod tests;
+
+pub use engine::CHAR_WIDTH;
+
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct LayoutOptions {
     /// Index into `Score::tracks`.
@@ -143,8 +151,7 @@ pub struct Cursor {
 
 /// Lay out one track. An out-of-range track produces an empty list.
 pub fn layout(score: &Score, options: &LayoutOptions) -> DisplayList {
-    let _ = (score, options);
-    todo!("Phase 1 agent D")
+    engine::layout(score, options)
 }
 
 /// Cursor for a position `tick_in_bar` ticks into `master_bar`, whose actual length is
@@ -157,13 +164,11 @@ pub fn cursor(
     tick_in_bar: u32,
     bar_ticks: u32,
 ) -> Option<Cursor> {
-    let _ = (list, master_bar, tick_in_bar, bar_ticks);
-    todo!("Phase 1 agent D")
+    query::cursor(list, master_bar, tick_in_bar, bar_ticks)
 }
 
 /// The master bar and tick under a point in list coordinates, for click-to-seek. Snaps to the
 /// nearest beat onset in the bar under the point. `None` if no bar is there.
 pub fn hit_test(list: &DisplayList, x: f32, y: f32) -> Option<(u32, u32)> {
-    let _ = (list, x, y);
-    todo!("Phase 1 agent D")
+    query::hit_test(list, x, y)
 }

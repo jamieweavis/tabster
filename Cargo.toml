@@ -52,3 +52,7 @@ uniffi = "0.32"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[[bench]]
+name = "layout"
+harness = false
