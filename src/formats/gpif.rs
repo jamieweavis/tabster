@@ -29,6 +29,7 @@
 
 mod dom;
 
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use log::debug;
@@ -46,6 +47,14 @@ const DEFAULT_TEMPO: f64 = 120.0;
 /// MIDI velocity for `F`, the default dynamic of a beat without a `<Dynamic>`.
 const DEFAULT_VELOCITY: u8 = 95;
 const INVALID_ID: &str = "-1";
+/// Limits that keep hostile documents from exhausting memory. GPIF links objects by id, so a
+/// small document can reference the same bar/voice/beat millions of times; every resolved
+/// beat and note counts against [`MAX_EVENTS`].
+const MAX_MASTER_BARS: usize = 10_000;
+const MAX_TRACKS: usize = 128;
+const MAX_EVENTS: usize = 4_000_000;
+/// As in GP5; also keeps a voice's total ticks well inside `u32`. Extra beats are dropped.
+const MAX_BEATS_PER_VOICE: usize = 1_024;
 
 /// Parse the contents of a `score.gpif` document.
 pub fn parse_gpif(xml: &[u8]) -> Result<Score, ParseError> {
@@ -59,7 +68,20 @@ pub fn parse_gpif(xml: &[u8]) -> Result<Score, ParseError> {
             root.name()
         )));
     }
-    Ok(Tables::read(root).build())
+    let tables = Tables::read(root);
+    if tables.master_bars.len() > MAX_MASTER_BARS {
+        return Err(ParseError::Invalid(format!(
+            "{} bars, more than the {MAX_MASTER_BARS} supported",
+            tables.master_bars.len()
+        )));
+    }
+    if tables.tracks.len() > MAX_TRACKS {
+        return Err(ParseError::Invalid(format!(
+            "{} tracks, more than the {MAX_TRACKS} supported",
+            tables.tracks.len()
+        )));
+    }
+    tables.build()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -85,6 +107,8 @@ struct Tables<'d> {
     beats: HashMap<&'d str, RawBeat<'d>>,
     notes: HashMap<&'d str, RawNote>,
     rhythms: HashMap<&'d str, Duration>,
+    /// Beats and notes that may still be resolved (see [`MAX_EVENTS`]).
+    budget: Cell<usize>,
 }
 
 enum AutomationKind {
@@ -901,7 +925,8 @@ enum TrackKind {
 }
 
 impl<'d> Tables<'d> {
-    fn build(mut self) -> Score {
+    fn build(mut self) -> Result<Score, ParseError> {
+        self.budget.set(MAX_EVENTS);
         let mut score = std::mem::take(&mut self.score);
 
         // Tracks, in MasterTrack order (document order if that's missing or useless).
@@ -1018,7 +1043,12 @@ impl<'d> Tables<'d> {
         score
             .sync_points
             .sort_by(|a, b| a.millisecond_offset.total_cmp(&b.millisecond_offset));
-        score
+        if self.budget.get() == 0 {
+            return Err(ParseError::Invalid(format!(
+                "more than {MAX_EVENTS} beats and notes"
+            )));
+        }
+        Ok(score)
     }
 
     fn resolve_bar(&self, id: &str, track: &RawTrack<'d>, kind: TrackKind) -> Bar {
@@ -1040,8 +1070,10 @@ impl<'d> Tables<'d> {
             placeholders = 0;
             let beats = beat_ids
                 .iter()
+                .take_while(|_| self.budget.get() > 0)
                 .filter(|&&b| b != INVALID_ID)
                 .filter_map(|&b| self.resolve_beat(b, track, kind))
+                .take(MAX_BEATS_PER_VOICE)
                 .collect();
             bar.voices.push(Voice { beats });
         }
@@ -1053,6 +1085,15 @@ impl<'d> Tables<'d> {
             debug!("gpif: missing beat {id}");
             return None;
         };
+        // Once the budget is spent it stays at 0 and `build` fails.
+        let cost = 1 + raw.notes.len();
+        match self.budget.get().checked_sub(cost) {
+            Some(left) if left > 0 => self.budget.set(left),
+            _ => {
+                self.budget.set(0);
+                return None;
+            }
+        }
         let Some(duration) = raw.rhythm.and_then(|r| self.rhythms.get(r)) else {
             debug!("gpif: beat {id} has no valid rhythm");
             return None;

@@ -24,6 +24,12 @@ const DEAD_VELOCITY: u8 = 40;
 const MIN_NOTE_SECS: f64 = 0.01;
 /// Velocity when the file doesn't give one.
 const DEFAULT_VELOCITY: u8 = 95;
+/// Bounds on what a hostile score (absurd tuplets, tremolo on huge notes, thousands of repeats)
+/// can make us allocate. Real songs are orders of magnitude below these.
+const MAX_SPANS: usize = 2_000_000;
+const MAX_TREMOLO_PICKS: u32 = 128;
+const MAX_CLICKS_PER_BAR: u64 = 256;
+const MAX_CLICKS: usize = 2_000_000;
 
 /// A note-on (`velocity > 0`) or note-off (`velocity == 0`).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -175,7 +181,7 @@ pub fn build(score: &Score, timeline: &Timeline) -> Events {
             beats_per_bar: numerator,
         });
         let mut k = 0;
-        while k * beat_ticks < len {
+        while k * beat_ticks < len && k < MAX_CLICKS_PER_BAR && clicks.len() < MAX_CLICKS {
             let secs = timeline.tick_to_secs(pb.start_tick + k * beat_ticks);
             let (key, velocity) = if k == 0 {
                 (CLICK_ACCENT_KEY, 115)
@@ -283,13 +289,20 @@ impl TrackGen<'_> {
                 self.strings.resize(vi + 1, Vec::new());
             }
             let mut offset = 0u32;
+            // Graces left in the current run of grace beats (counted once per run, so a voice
+            // of nothing but graces stays linear).
+            let mut graces_left = 0usize;
             for (bi, beat) in voice.beats.iter().enumerate() {
                 if beat.effects.grace {
+                    if graces_left == 0 {
+                        graces_left = voice.beats[bi..]
+                            .iter()
+                            .take_while(|b| b.effects.grace)
+                            .count();
+                    }
+                    graces_left -= 1;
                     // Graces lead into the next real beat: k-th of n graces starts n−k slots early.
-                    let after = voice.beats[bi + 1..]
-                        .iter()
-                        .take_while(|b| b.effects.grace)
-                        .count();
+                    let after = graces_left;
                     let main = secs_at(offset);
                     let start = (main - GRACE_SECS * (after + 1) as f64).max(0.0);
                     self.beat(vi, beat, start, start + GRACE_SECS, pb.end_secs);
@@ -298,11 +311,11 @@ impl TrackGen<'_> {
                 let ticks = beat.duration.ticks();
                 let (s, e) = match feel {
                     Some(f) if beat.duration.tuplet.is_none() => {
-                        (warp(offset, f), warp(offset + ticks, f))
+                        (warp(offset, f), warp(offset.saturating_add(ticks), f))
                     }
-                    _ => (offset, offset + ticks),
+                    _ => (offset, offset.saturating_add(ticks)),
                 };
-                offset += ticks;
+                offset = offset.saturating_add(ticks);
                 if beat.is_rest() {
                     continue;
                 }
@@ -318,6 +331,9 @@ impl TrackGen<'_> {
     }
 
     fn note(&mut self, voice: usize, beat: &Beat, note: &Note, start: f64, end: f64, bar_end: f64) {
+        if self.spans.len() >= MAX_SPANS {
+            return;
+        }
         let fx = &note.effects;
         let percussion = self.track.is_percussion;
         let key = if percussion {
@@ -410,7 +426,7 @@ impl TrackGen<'_> {
                 // Re-pick every `value`th note for the beat's whole length.
                 let step_ticks = TICKS_PER_QUARTER * 4 / u32::from(value);
                 let beat_ticks = beat.duration.ticks().max(1);
-                let count = (beat_ticks / step_ticks.max(1)).max(1);
+                let count = (beat_ticks / step_ticks.max(1)).clamp(1, MAX_TREMOLO_PICKS);
                 let step = length / f64::from(count);
                 for k in 0..count {
                     let s = start + step * f64::from(k);

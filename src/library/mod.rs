@@ -188,6 +188,7 @@ impl Library {
         }
 
         let db_path = data_dir.join("library.sqlite");
+        set_aside_if_corrupt(&db_path)?;
         let mut writer = Connection::open(&db_path)?;
         configure(&writer)?;
         writer.pragma_update(None, "journal_mode", "WAL")?;
@@ -249,7 +250,7 @@ impl Library {
 
     /// The tab's id and whether it was already in the library.
     fn try_import(&self, path: &Path, parse: ParseFn) -> Result<(TabId, bool), LibraryError> {
-        let bytes = fs::read(path)?;
+        let bytes = read_limited(path)?;
         let hash = sha256_hex(&bytes);
         let extension = path.extension().and_then(|e| e.to_str());
         let format = formats::detect(&bytes, extension).ok_or(ParseError::UnknownFormat)?;
@@ -668,6 +669,71 @@ impl Library {
 /// music.youtube.com) or a bare id.
 pub fn parse_youtube_id(input: &str) -> Option<String> {
     youtube::parse_youtube_id(input)
+}
+
+/// Tab files are at most a few MB (GP8 files with embedded audio a few tens); refuse anything
+/// bigger rather than reading it all into memory.
+const MAX_TAB_FILE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Read a file to import, refusing ones over [`MAX_TAB_FILE_BYTES`] (checked while reading, so a
+/// file that grows meanwhile can't sneak past).
+fn read_limited(path: &Path) -> Result<Vec<u8>, LibraryError> {
+    use std::io::Read;
+    // Opening a FIFO or device would block or never end.
+    if !fs::metadata(path)?.is_file() {
+        return Err(LibraryError::Io(std::io::Error::other(
+            "not a regular file",
+        )));
+    }
+    let file = fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    let mut bytes = Vec::with_capacity(size.min(MAX_TAB_FILE_BYTES) as usize);
+    file.take(MAX_TAB_FILE_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_TAB_FILE_BYTES {
+        return Err(LibraryError::Io(std::io::Error::other(format!(
+            "file is larger than {} MB",
+            MAX_TAB_FILE_BYTES / (1024 * 1024)
+        ))));
+    }
+    Ok(bytes)
+}
+
+/// If the database at `db_path` exists but isn't a readable SQLite database (or fails SQLite's
+/// quick integrity check), move it and its WAL/shared-memory files aside as
+/// `library.sqlite.corrupt-<unix time>…` so the library starts fresh instead of failing to open
+/// forever. The stored tab files are left alone. A database that's merely locked or unreadable
+/// isn't touched (opening then reports the error).
+fn set_aside_if_corrupt(db_path: &Path) -> Result<(), LibraryError> {
+    if !db_path.exists() {
+        return Ok(());
+    }
+    let corrupt = match Connection::open(db_path).and_then(|c| {
+        c.busy_timeout(BUSY_TIMEOUT)?;
+        c.query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+    }) {
+        Ok(result) => result != "ok",
+        Err(rusqlite::Error::SqliteFailure(e, _)) => matches!(
+            e.code,
+            rusqlite::ErrorCode::NotADatabase | rusqlite::ErrorCode::DatabaseCorrupt
+        ),
+        Err(_) => false,
+    };
+    if !corrupt {
+        return Ok(());
+    }
+    let aside = format!("{}.corrupt-{}", db_path.display(), unix_now());
+    log::warn!(
+        "the library database {} is corrupt; moving it to {aside} and starting a new one",
+        db_path.display()
+    );
+    for suffix in ["", "-wal", "-shm"] {
+        let from = PathBuf::from(format!("{}{suffix}", db_path.display()));
+        match fs::rename(&from, format!("{aside}{suffix}")) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn configure(connection: &Connection) -> Result<(), LibraryError> {

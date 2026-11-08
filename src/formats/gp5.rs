@@ -20,6 +20,8 @@
 //! - Mix-table instrument/volume/pan changes, lyrics, RSE, page setup, chord diagrams (only the
 //!   chord name is kept), fingering and ottava are skipped.
 
+use std::collections::HashSet;
+
 use super::ParseError;
 use crate::model::{
     Bar, Beat, BeatEffects, Bend, Direction, Duration, Harmonic, MasterBar, Note, Score, Section,
@@ -62,6 +64,7 @@ pub fn parse(bytes: &[u8]) -> Result<Score, ParseError> {
         r: Reader::new(bytes),
         version: 0,
         score: Score::default(),
+        tempo_keys: HashSet::new(),
     }
     .parse()
 }
@@ -186,6 +189,9 @@ struct Parser<'a> {
     /// 500 or 510.
     version: u32,
     score: Score,
+    /// `(bar, position bits, bpm bits)` of every tempo change so far, to drop duplicates (every
+    /// track repeats them) in constant time.
+    tempo_keys: HashSet<(u32, u64, u64)>,
 }
 
 /// A note as read from the file, plus the parts the model stores elsewhere.
@@ -460,7 +466,8 @@ impl Parser<'_> {
                     position: (f64::from(position) / f64::from(bar_ticks.max(1))).min(0.999_999),
                     bpm: f64::from(bpm),
                 };
-                if !self.score.tempo_changes.contains(&change) {
+                let key = (change.bar, change.position.to_bits(), change.bpm.to_bits());
+                if self.tempo_keys.insert(key) {
                     self.score.tempo_changes.push(change);
                 }
             }
