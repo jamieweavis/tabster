@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import QuartzCore
+import TabsterKit
 
 /// What the canvas needs pushed to it imperatively (not through SwiftUI, so per-frame cursor
 /// updates never re-evaluate a view body).
@@ -56,7 +57,9 @@ final class TabViewerModel {
     private(set) var track: UInt32 = 0
     private(set) var scale: Float = 1
     private(set) var showRhythm: Bool = UserDefaults.standard.object(forKey: "viewer.showRhythm") as? Bool ?? true
-    var isPlaying = false
+    var isPlaying = false {
+        didSet { if isPlaying != oldValue { practicePlayingChanged() } }
+    }
     /// Playback position for the transport UI, refreshed ~10× a second while playing.
     var displayTime: Double = 0
     var speed: Double = 1
@@ -108,6 +111,33 @@ final class TabViewerModel {
     }
     @ObservationIgnored private(set) var playedBars: [PlayedBar] = []
     @ObservationIgnored var position: PlaybackPosition?
+
+    // Practice tools (see TabViewerModel+Practice.swift).
+    /// The tab's saved loop sections.
+    var savedLoops: [SavedLoop] = []
+    /// The running speed trainer (needs a loop).
+    var trainer: SpeedTrainer?
+    var trainerSettings = SpeedTrainer.Settings(
+        string: UserDefaults.standard.string(forKey: "viewer.trainer") ?? ""
+    ) ?? SpeedTrainer.Settings() {
+        didSet { UserDefaults.standard.set(trainerSettings.string, forKey: "viewer.trainer") }
+    }
+    /// A bar of clicks before playing (synth clock only). Remembered across tabs.
+    var countIn = UserDefaults.standard.bool(forKey: "viewer.countIn") {
+        didSet {
+            UserDefaults.standard.set(countIn, forKey: "viewer.countIn")
+            synthClock?.countInBars = countIn ? 1 : 0
+        }
+    }
+    var practiceStats: PracticeStats?
+    /// The practice popover is open.
+    var showPractice = false
+    @ObservationIgnored var practiceTimer = PracticeTimer()
+    @ObservationIgnored var practiceFlushTask: Task<Void, Never>?
+    /// Score time of the last frame, to notice the clock wrapping the loop on its own (the synth).
+    @ObservationIgnored var lastTickScore: Double?
+    /// Debug harness: called on every loop pass the trainer counts.
+    @ObservationIgnored var trainerObserver: ((SpeedTrainer, SpeedTrainer.Event) -> Void)?
     /// Video time of every played bar's start under the current sync (for taps and the ruler).
     @ObservationIgnored var barVideoTimes: [Double] = []
     /// Bars the user placed explicitly in per-bar mode (taps, drags).
@@ -176,6 +206,7 @@ final class TabViewerModel {
             playedBars = opened.playedBars
             if let state = opened.state { restore(state, info: opened.info) }
             phase = .ready
+            loadPracticeData()
             videosLoaded(opened.videos)
             loadSynth(opened.session)
             ViewerMetrics.openMs = (CACurrentMediaTime() - openedAt) * 1000
@@ -309,6 +340,7 @@ final class TabViewerModel {
         // A video keeps its own position (e.g. still in the intro, before bar 1) unless the
         // transport has to move it.
         if !usingVideoClock || t != now { seekClock(toScore: t) }
+        lastTickScore = nil
         clock.play()
         isPlaying = true
         sink?.playingChanged(true)
@@ -330,6 +362,7 @@ final class TabViewerModel {
         seekClock(toScore: t)
         displayTime = t
         updateLoopSpan(near: t)
+        lastTickScore = nil
         refresh(follow: true)
         if !isPlaying { scheduleSave() }
     }
@@ -345,11 +378,16 @@ final class TabViewerModel {
             // while YouTube catches up (~0.5 s).
             t = span.lowerBound
             seekClock(toScore: t)
+            loopWrapped(span)
+        } else if let span = loopSpan, let last = lastTickScore, Self.wrappedOnItsOwn(from: last, to: t, in: span) {
+            // The synth loops by itself.
+            loopWrapped(span)
         } else if t >= duration, !usingVideoClock {
             t = duration
             pause()
             seekClock(toScore: t)
         }
+        lastTickScore = t
         // A video plays on past the tab's ends (intro, outro); the cursor waits at the edge.
         position = cursorPosition(atScore: t)
         frameObserver?(hostTime, media, t, position?.playedBar)
@@ -456,6 +494,8 @@ final class TabViewerModel {
 
     func setLoop(_ range: ClosedRange<UInt32>?) {
         loop = range
+        if range == nil { stopTrainer() }
+        lastTickScore = nil
         updateLoopSpan(near: currentTime)
         sink?.showLoop(range)
         if isPlaying, let span = loopSpan, !span.contains(currentTime) {
@@ -487,6 +527,7 @@ final class TabViewerModel {
         Task { [weak self] in
             guard let clock = await SynthPlaybackClock.make(session: session), let self else { return }
             clock.synth.setMetronome(enabled: self.metronome)
+            clock.countInBars = self.countIn ? 1 : 0
             clock.synth.setLoop(startSecs: self.loopSpan?.lowerBound, endSecs: self.loopSpan?.upperBound)
             self.synthClock = clock
             self.synthAvailable = true
@@ -543,6 +584,8 @@ final class TabViewerModel {
     }
 
     func close(synchronously: Bool = false) {
+        // Before pausing, which would otherwise write it in the background.
+        flushPractice(synchronously: synchronously)
         if isPlaying || usingVideoClock {
             clock.pause()
             isPlaying = false

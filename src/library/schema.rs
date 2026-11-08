@@ -6,7 +6,7 @@ use rusqlite::{Connection, TransactionBehavior};
 use super::LibraryError;
 
 /// Each step runs in its own transaction, together with the `user_version` bump.
-const MIGRATIONS: &[&str] = &[V1];
+const MIGRATIONS: &[&str] = &[V1, V2];
 
 const V1: &str = "
 CREATE TABLE tabs (
@@ -98,6 +98,33 @@ CREATE TABLE practice (
 );
 ";
 
+/// Practice tools: named loop sections per tab, and practice time per tab per local day.
+const V2: &str = "
+CREATE TABLE saved_loops (
+    id INTEGER PRIMARY KEY,
+    tab_id INTEGER NOT NULL REFERENCES tabs (id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    -- Inclusive master-bar range (0-based).
+    start_bar INTEGER NOT NULL,
+    end_bar INTEGER NOT NULL,
+    -- Unix seconds.
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX saved_loops_tab ON saved_loops (tab_id);
+
+CREATE TABLE practice_days (
+    tab_id INTEGER NOT NULL REFERENCES tabs (id) ON DELETE CASCADE,
+    -- Days since 1970-01-01 in local time.
+    day INTEGER NOT NULL,
+    secs REAL NOT NULL DEFAULT 0,
+    -- Sessions that started this day (a gap of 30 minutes starts a new one).
+    sessions INTEGER NOT NULL DEFAULT 0,
+    -- Unix seconds of the last recording.
+    last_at INTEGER NOT NULL,
+    PRIMARY KEY (tab_id, day)
+) WITHOUT ROWID;
+";
+
 /// Bring the database up to the latest schema. Refuses a database from a newer Tabster.
 /// The version is read inside each step's write transaction, so two connections opening the
 /// same library at once can't apply a step twice.
@@ -124,4 +151,14 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), LibraryError> {
 
 pub(super) fn latest_version() -> i64 {
     MIGRATIONS.len() as i64
+}
+
+/// Apply only the first `version` migrations to a fresh database (tests of upgrades).
+#[cfg(test)]
+pub(super) fn migrate_to(connection: &Connection, version: usize) -> Result<(), LibraryError> {
+    for (v, step) in MIGRATIONS.iter().enumerate().take(version) {
+        connection.execute_batch(step)?;
+        connection.pragma_update(None, "user_version", v as i64 + 1)?;
+    }
+    Ok(())
 }

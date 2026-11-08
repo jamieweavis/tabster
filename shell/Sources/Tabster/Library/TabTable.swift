@@ -1,4 +1,5 @@
 import AppKit
+import TabsterKit
 import SwiftUI
 
 /// The tabs matching the sidebar item and search.
@@ -8,6 +9,8 @@ struct TabTable: View {
     @State private var sortOrder: [KeyPathComparator<TabSummary>] = []
     @State private var tagging: TabSummary?
     @State private var deleting: Set<Int64> = []
+    /// Practice seconds per tab, for the Practice column.
+    @State private var practice: [Int64: Double] = [:]
 
     private var rows: [TabSummary] {
         sortOrder.isEmpty ? model.tabs : model.tabs.sorted(using: sortOrder)
@@ -35,6 +38,12 @@ struct TabTable: View {
                 Text(Self.formatLength(tab.durationSecs)).monospacedDigit()
             }
             .width(min: 46, ideal: 50, max: 72)
+            TableColumn("Practice") { (tab: TabSummary) in
+                if let secs = practice[tab.id], secs >= 60 {
+                    Text(PracticeFormat.duration(secs)).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+            .width(min: 46, ideal: 56, max: 80)
             TableColumn(Text(Image(systemName: "play.rectangle")).accessibilityLabel("Video")) { (tab: TabSummary) in
                 if tab.hasVideo {
                     Image(systemName: "play.rectangle")
@@ -59,6 +68,11 @@ struct TabTable: View {
         }
         .overlay {
             if model.tabs.isEmpty { emptyState }
+        }
+        // Refreshed with the list and when a tab is closed (selection changes).
+        .task(id: [model.tabs.map(\.id), [model.selection ?? 0]]) {
+            guard let core = model.core else { return }
+            practice = await Task.detached { (try? core.practiceTotals()) ?? [:] }.value
         }
         .navigationTitle(title)
         .navigationSubtitle(model.tabs.isEmpty ? "" : "\(model.tabs.count) tab\(model.tabs.count == 1 ? "" : "s")")
