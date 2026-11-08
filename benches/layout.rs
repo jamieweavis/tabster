@@ -1,4 +1,5 @@
-//! Layout performance: a 300-bar, 6-string track with ~8 beats per bar must lay out in < 5 ms.
+//! Layout performance: a 300-bar, 6-string track with ~8 beats per bar (plus runs of empty bars
+//! that collapse into multi-bar rests, and tied notes) must lay out in < 5 ms.
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use tabster_core::layout::{self, LayoutOptions};
@@ -24,6 +25,11 @@ fn score(bars: usize) -> Score {
             repeat_end: if i % 8 == 7 { 2 } else { 0 },
             ..Default::default()
         });
+        if i % 20 >= 17 {
+            // Three empty bars: a multi-bar rest.
+            track.bars.push(Bar::default());
+            continue;
+        }
         let beats = (0..8u8)
             .map(|k| Beat {
                 duration: Duration {
@@ -36,12 +42,12 @@ fn score(bars: usize) -> Score {
                         string: 1 + (k + n) % 6,
                         fret: (i as u8 % 15) + k,
                         velocity: 100,
+                        tie_destination: k % 4 == 1,
                         effects: NoteEffects {
                             palm_mute: i % 4 == 0,
                             hammer_pull: k == 3,
                             ..Default::default()
                         },
-                        ..Default::default()
                     })
                     .collect(),
                 ..Default::default()

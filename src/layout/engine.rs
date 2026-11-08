@@ -1,7 +1,8 @@
 //! The layout engine behind [`super::layout`].
 //!
-//! Pipeline: measure every bar (beat columns and fixed decorations) → break bars greedily into
-//! systems → justify each system → emit primitives in paint order.
+//! Pipeline: measure every bar (beat columns and fixed decorations) → collapse runs of empty bars
+//! into multi-bar rests → break bars greedily into systems → justify each system (rest-only bars
+//! stretch less) → emit primitives in paint order.
 //!
 //! Text widths are approximations ([`CHAR_WIDTH`] × font size per character): Rust has no font
 //! access. The shell must draw fret numbers with a monospaced-digit font (SF Mono, or the system
@@ -13,7 +14,7 @@ use super::{
     BarBox, BeatBox, DisplayList, Ink, LayoutOptions, Primitive, Rect, System, TextAnchor,
 };
 use crate::model::{
-    Bar, Beat, Direction, MasterBar, Note, Score, Slide, TICKS_PER_QUARTER, Track, Voice,
+    Bar, Beat, Direction, MasterBar, Note, Score, Section, Slide, TICKS_PER_QUARTER, Track, Voice,
 };
 
 /// Approximate advance width of one character, as a fraction of the font size.
@@ -56,9 +57,11 @@ struct Metrics {
 }
 
 impl Metrics {
-    fn new(track: &Track, s: f32) -> Self {
-        let lines = if track.is_percussion || track.tuning.is_empty() {
-            if track.is_percussion { 5 } else { 6 }
+    fn new(track: &Track, no_tab: bool, s: f32) -> Self {
+        let lines = if track.is_percussion {
+            5
+        } else if track.tuning.is_empty() || (no_tab && track.tuning.len() < 4) {
+            6
         } else {
             track.tuning.len()
         };
@@ -107,6 +110,15 @@ struct Prep {
     right: f32,
     time_sig: bool,
     lanes: u8,
+    /// Nothing to draw on the staff (only rests): the bar gets a compact width that stretches
+    /// less than busy bars when a system is justified.
+    rest_only: bool,
+    /// 1 = an ordinary bar; n ≥ 2 = the first of n rest-only bars collapsed into one multi-bar
+    /// rest (its `cols`/`right` then cover the whole run); 0 = a later bar of such a run, laid
+    /// out by the run's first bar (zero size of its own).
+    run: u32,
+    /// Minimum natural width, to fit the labels drawn over the bar.
+    min_w: f32,
 }
 
 impl Prep {
@@ -114,6 +126,9 @@ impl Prep {
         self.left + self.cols + self.right
     }
 }
+
+/// Stretch factor beyond which rest-only bars stop widening (busy bars take the rest).
+const REST_STRETCH_CAP: f32 = 1.5;
 
 struct TempoMark {
     bar: u32,
@@ -128,11 +143,24 @@ struct Ctx<'a> {
     preps: Vec<Prep>,
     tempo: Vec<TempoMark>,
     rhythm: bool,
+    /// A pitched track with nothing to show as tab (no tuning, or no note on a real string).
+    no_tab: bool,
 }
 
 impl Ctx<'_> {
     fn bar(&self, i: usize) -> &Bar {
         self.track.bars.get(i).unwrap_or(&EMPTY_BAR)
+    }
+
+    /// Whether a note has a place on this staff.
+    fn shown(&self, note: &Note) -> bool {
+        self.track.is_percussion
+            || (!self.no_tab && note.string >= 1 && usize::from(note.string) <= self.m.lines)
+    }
+
+    /// Whether the bar at `i` continues a multi-bar rest (laid out by the run's first bar).
+    fn in_run(&self, i: usize) -> bool {
+        self.preps.get(i).is_some_and(|p| p.run == 0)
     }
 
     fn tempo_in(&self, bar: usize) -> &[TempoMark] {
@@ -155,7 +183,8 @@ pub(super) fn layout(score: &Score, options: &LayoutOptions) -> DisplayList {
     } else {
         1.0
     };
-    let m = Metrics::new(track, s);
+    let no_tab = !track.is_percussion && !has_tab(track);
+    let m = Metrics::new(track, no_tab, s);
     let mut ctx = Ctx {
         score,
         track,
@@ -163,10 +192,14 @@ pub(super) fn layout(score: &Score, options: &LayoutOptions) -> DisplayList {
         preps: Vec::new(),
         tempo: tempo_marks(score),
         rhythm: options.show_rhythm,
+        no_tab,
     };
-    ctx.preps = (0..score.master_bars.len())
+    let mut preps: Vec<Prep> = (0..score.master_bars.len())
         .map(|i| measure(&ctx, i))
         .collect();
+    group_rests(&ctx, &mut preps);
+    fit_labels(&mut preps);
+    ctx.preps = preps;
 
     let avail = (options.width - 2.0 * ctx.m.margin - ctx.m.clef_w).max(40.0 * s);
     let ranges = break_lines(&ctx.preps, avail);
@@ -182,6 +215,83 @@ pub(super) fn layout(score: &Score, options: &LayoutOptions) -> DisplayList {
         height: y,
         systems,
     }
+}
+
+/// Whether a pitched track has any note that can be drawn as tab: a real tuning (not the
+/// all-zero placeholder importers give untuned instruments) and a note on one of its strings.
+fn has_tab(track: &Track) -> bool {
+    let n = track.tuning.len();
+    if track.tuning.iter().all(|&p| p == 0) {
+        return false;
+    }
+    track.bars.iter().any(|bar| {
+        bar.voices.iter().any(|v| {
+            v.beats.iter().any(|b| {
+                b.notes
+                    .iter()
+                    .any(|note| note.string >= 1 && usize::from(note.string) <= n)
+            })
+        })
+    })
+}
+
+/// Collapses runs of ≥ 2 rest-only bars into multi-bar rests. A run never crosses anything
+/// that must stay visible: a section, repeat sign, time signature change, direction, tempo
+/// change, alternate ending or double bar line (the run's first bar may carry the ones drawn
+/// at a bar's start).
+fn group_rests(ctx: &Ctx, preps: &mut [Prep]) {
+    let mbs = &ctx.score.master_bars;
+    let starts_run = |i: usize| {
+        let mb = &mbs[i];
+        preps[i].rest_only
+            && mb.alternate_endings == 0
+            && mb.directions.iter().all(|&d| !direction_label(d).1)
+    };
+    let joins = |j: usize| {
+        let (mb, prev) = (&mbs[j], &mbs[j - 1]);
+        preps[j].rest_only
+            && mb.section.is_none()
+            && !mb.repeat_start
+            && !preps[j].time_sig
+            && mb.directions.is_empty()
+            && mb.alternate_endings == 0
+            && ctx.tempo_in(j).is_empty()
+            && prev.repeat_end == 0
+            && !prev.double_bar
+    };
+    let mut runs = Vec::new();
+    let mut i = 0;
+    while i < preps.len() {
+        let mut j = i + 1;
+        if starts_run(i) {
+            while j < preps.len() && joins(j) {
+                j += 1;
+            }
+        }
+        if j - i >= 2 {
+            runs.push(i..j);
+        }
+        i = j;
+    }
+    let s = ctx.m.s;
+    for r in runs {
+        let n = r.len();
+        let right = preps[r.end - 1].right;
+        for p in &mut preps[r.start + 1..r.end] {
+            p.run = 0;
+            p.left = 0.0;
+            p.cols = 0.0;
+            p.right = 0.0;
+        }
+        let first = &mut preps[r.start];
+        first.run = n as u32;
+        first.right = right;
+        first.cols = (44.0 + 7.0 * digits_usize(n) as f32) * s;
+    }
+}
+
+fn digits_usize(n: usize) -> usize {
+    n.max(1).ilog10() as usize + 1
 }
 
 /// Tempo markings to draw: the initial tempo at bar 0, then every change of value.
@@ -245,34 +355,53 @@ fn measure(ctx: &Ctx, i: usize) -> Prep {
         actual
     };
 
+    let rest_only = !bar.voices.iter().any(|v| {
+        v.beats
+            .iter()
+            .any(|b| b.chord.is_some() || b.text.is_some() || b.notes.iter().any(|n| ctx.shown(n)))
+    });
+    // Rest-only bars are compact: a whole-bar rest needs little room.
+    let (base, per_halving) = if rest_only { (8.0, 3.0) } else { (14.0, 6.0) };
     let mut widths: Vec<f32> = onsets
         .iter()
         .enumerate()
         .map(|(k, &t)| {
             let next = onsets.get(k + 1).copied().unwrap_or(ticks.max(t + 1));
             let halvings = ((next - t) as f32 / SIXTY_FOURTH).log2().max(0.0);
-            (14.0 + 6.0 * halvings) * m.s
+            (base + per_halving * halvings) * m.s
         })
         .collect();
 
+    // Labels drawn from the bar's start must fit over it (rest-only bars are narrow).
+    let mut min_w: f32 = 0.0;
     let mut lanes = 0;
-    if mb.section.is_some() {
+    if let Some(sec) = &mb.section {
         lanes |= L_SECTION;
+        min_w = text_width(section_label_len(sec), 11.0 * m.s) + 12.0 * m.s;
     }
     if !mb.directions.is_empty() || !ctx.tempo_in(i).is_empty() {
         lanes |= L_MARKS;
+        let tempo = ctx.tempo_in(i).len() * TEMPO_LABEL_CHARS;
+        let dirs: usize = mb
+            .directions
+            .iter()
+            .map(|&d| direction_label(d).0.chars().count() + 2)
+            .sum();
+        min_w = min_w.max(text_width(tempo + dirs, 10.0 * m.s) + 12.0 * m.s);
     }
     if mb.alternate_endings != 0 {
         lanes |= L_ENDING;
     }
-    if i == 0 && ctx.track.is_percussion {
+    if i == 0 && (ctx.track.is_percussion || ctx.no_tab) {
         lanes |= L_CHORD;
+        min_w = min_w.max(text_width(NO_TAB_LABEL.len(), 10.0 * m.s) + 12.0 * m.s);
     }
     let primary = primary_voice(bar).map(|(v, _)| v);
     for (v, voice) in bar.voices.iter().enumerate() {
         let mut t = 0;
         for beat in &voice.beats {
             let col = onsets.binary_search(&t).unwrap_or(0);
+            let onset = t;
             t += beat.duration.ticks();
             if beat.chord.is_some() || beat.text.is_some() {
                 lanes |= L_CHORD;
@@ -281,7 +410,17 @@ fn measure(ctx: &Ctx, i: usize) -> Prep {
                 continue;
             }
             for note in &beat.notes {
-                let mut w = text_width(label_len(note), m.fret) + 6.0 * m.s;
+                if !ctx.shown(note) {
+                    continue;
+                }
+                // A tied note is only written out (as "(n)") at the start of a system, which
+                // can only be a bar's first beat; elsewhere a tie arc replaces it.
+                let label = if note.tie_destination && onset > 0 {
+                    0
+                } else {
+                    label_len(note)
+                };
+                let mut w = text_width(label, m.fret) + 6.0 * m.s;
                 if note.effects.bend.is_some() {
                     w += 10.0 * m.s;
                 }
@@ -326,18 +465,50 @@ fn measure(ctx: &Ctx, i: usize) -> Prep {
         right,
         time_sig,
         lanes,
+        rest_only,
+        run: 1,
+        min_w,
+    }
+}
+
+const NO_TAB_LABEL: &str = "No tab for this track";
+
+/// Approximate length of a "♩ = 120" tempo label plus spacing.
+const TEMPO_LABEL_CHARS: usize = 9;
+
+fn section_label_len(sec: &Section) -> usize {
+    let (l, t) = (sec.letter.chars().count(), sec.text.chars().count());
+    match (l, t) {
+        (0, t) => t,
+        (l, 0) => l,
+        (l, t) => l + 3 + t,
+    }
+}
+
+/// Widens bars (and multi-bar rests) too narrow for the labels drawn over them.
+fn fit_labels(preps: &mut [Prep]) {
+    for p in preps.iter_mut().filter(|p| p.run != 0) {
+        let extra = p.min_w - p.natural();
+        if extra <= 0.0 {
+            continue;
+        }
+        if p.run == 1 && p.cols > 0.0 {
+            let k = (p.cols + extra) / p.cols;
+            p.widths.iter_mut().for_each(|w| *w *= k);
+        }
+        p.cols += extra;
     }
 }
 
 /// Greedy line breaking: as many bars per system as fit; a bar always starts a system if it
-/// doesn't fit next to others.
+/// doesn't fit next to others. A multi-bar rest is never split.
 fn break_lines(preps: &[Prep], avail: f32) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let mut start = 0;
     let mut acc = 0.0;
     for (i, p) in preps.iter().enumerate() {
         let w = p.natural();
-        if i > start && acc + w > avail {
+        if i > start && p.run != 0 && acc + w > avail {
             ranges.push(start..i);
             start = i;
             acc = 0.0;
@@ -365,7 +536,7 @@ struct Rows {
 }
 
 impl Rows {
-    fn new(m: &Metrics, top: f32, lanes: u8, rhythm: bool) -> Self {
+    fn new(m: &Metrics, top: f32, lanes: u8, rhythm: bool, perc: bool) -> Self {
         let s = m.s;
         let mut y = top + 6.0 * s;
         let mut lane = |flag: u8, h: f32| {
@@ -382,7 +553,8 @@ impl Rows {
         let ring = lane(L_RING, m.lane);
         let pm = lane(L_PM, m.lane);
         let bend = lane(L_BEND, m.lane);
-        let staff_top = y + 14.0 * s;
+        // Drum staves have cymbal heads above the top line (and on a ledger line).
+        let staff_top = y + if perc { 26.0 } else { 14.0 } * s;
         let staff_bot = staff_top + m.staff_h;
         let (stem_top, stem_bot, bottom) = if rhythm {
             let stem_top = staff_bot + 10.0 * s;
@@ -502,58 +674,90 @@ fn emit_system(ctx: &Ctx, range: Range<usize>, top: f32, avail: f32, last: bool)
     let m = &ctx.m;
     let preps = &ctx.preps[range.clone()];
     let lanes = preps.iter().fold(0, |acc, p| acc | p.lanes);
-    let rows = Rows::new(m, top, lanes, ctx.rhythm);
+    let rows = Rows::new(m, top, lanes, ctx.rhythm, ctx.track.is_percussion);
 
     // Justify: stretch (or compress) the beat columns; fixed decorations keep their size.
-    let fixed: f32 = preps.iter().map(|p| p.left + p.right).sum();
-    let cols: f32 = preps.iter().map(|p| p.cols).sum();
-    let mut f = if cols > 0.0 {
-        (avail - fixed) / cols
-    } else {
-        1.0
-    };
-    if last {
-        f = f.min(1.3);
+    let mut fixed = 0.0;
+    let (mut busy, mut rests) = (0.0, 0.0);
+    for p in preps {
+        fixed += p.left + p.right;
+        if p.rest_only {
+            rests += p.cols;
+        } else {
+            busy += p.cols;
+        }
     }
-    let f = f.max(0.2);
+    let (f, fr) = justify(avail - fixed, busy, rests, last);
 
     let frame_y = rows.staff_top - m.ls / 2.0;
     let frame_h = m.staff_h + m.ls;
+    let frame = |x: f32, right: f32| Rect {
+        x,
+        y: frame_y,
+        width: right - x,
+        height: frame_h,
+    };
     let mut x = m.margin + m.clef_w;
-    let bars: Vec<BarBox> = range
-        .clone()
-        .zip(preps)
-        .map(|(i, p)| {
-            let mut cx = x + p.left;
-            let beats = p
-                .onsets
-                .iter()
-                .zip(&p.widths)
-                .map(|(&t, &w)| {
-                    let w = w * f;
-                    let b = BeatBox {
-                        tick_in_bar: t,
-                        x: cx + w / 2.0,
-                    };
-                    cx += w;
-                    b
-                })
-                .collect();
-            let width = cx + p.right - x;
-            let frame = Rect {
-                x,
-                y: frame_y,
-                width,
-                height: frame_h,
-            };
-            x += width;
-            BarBox {
-                master_bar: i as u32,
-                frame,
-                beats,
+    let mut bars: Vec<BarBox> = Vec::with_capacity(range.len());
+    for (i, p) in range.clone().zip(preps) {
+        match p.run {
+            0 => {} // Laid out with its multi-bar rest.
+            1 => {
+                let f = if p.rest_only { fr } else { f };
+                let mut cx = x + p.left;
+                let beats = p
+                    .onsets
+                    .iter()
+                    .zip(&p.widths)
+                    .map(|(&t, &w)| {
+                        let w = w * f;
+                        let b = BeatBox {
+                            tick_in_bar: t,
+                            x: cx + w / 2.0,
+                        };
+                        cx += w;
+                        b
+                    })
+                    .collect();
+                let right = cx + p.right;
+                bars.push(BarBox {
+                    master_bar: i as u32,
+                    frame: frame(x, right),
+                    beats,
+                });
+                x = right;
             }
-        })
-        .collect();
+            n => {
+                // One slice of the multi-rest per bar, so the cursor glides through it bar by
+                // bar; each slice's only onset sits at its left edge.
+                let n = n as usize;
+                let content = x + p.left;
+                let per = p.cols * fr / n as f32;
+                let nudge = (per * 0.05).min(0.5 * m.s);
+                for k in 0..n {
+                    let (x0, onset) = if k == 0 {
+                        (x, content)
+                    } else {
+                        let x0 = content + k as f32 * per;
+                        (x0, x0 + nudge)
+                    };
+                    let mut x1 = content + (k + 1) as f32 * per;
+                    if k + 1 == n {
+                        x1 += p.right;
+                    }
+                    bars.push(BarBox {
+                        master_bar: (i + k) as u32,
+                        frame: frame(x0, x1),
+                        beats: vec![BeatBox {
+                            tick_in_bar: 0,
+                            x: onset,
+                        }],
+                    });
+                    x = x1;
+                }
+            }
+        }
+    }
     let right = x;
 
     let mut out = Out {
@@ -583,6 +787,30 @@ fn emit_system(ctx: &Ctx, range: Range<usize>, top: f32, avail: f32, last: bool)
         primitives: out.p,
         bars,
     }
+}
+
+/// Stretch factors (busy bars, rest-only bars) that fill `space` with columns of natural
+/// widths `busy` and `rests`. Rest-only bars stretch like the others up to
+/// [`REST_STRETCH_CAP`]; beyond that only busy bars widen, so a few empty bars don't push the
+/// music around. The last system is never stretched much.
+fn justify(space: f32, busy: f32, rests: f32, last: bool) -> (f32, f32) {
+    let (mut f, mut fr) = if busy <= 0.0 {
+        let fr = if rests > 0.0 { space / rests } else { 1.0 };
+        (fr, fr)
+    } else {
+        let f = (space - rests * REST_STRETCH_CAP) / busy;
+        if f >= REST_STRETCH_CAP {
+            (f, REST_STRETCH_CAP)
+        } else {
+            let u = space / (busy + rests);
+            (u, u)
+        }
+    };
+    if last {
+        f = f.min(1.3);
+        fr = fr.min(1.3);
+    }
+    (f.max(0.2), fr.max(0.2))
 }
 
 struct SystemEmitter<'a> {
@@ -648,6 +876,9 @@ impl SystemEmitter<'_> {
         let bright = bx + bb.frame.width;
 
         self.barlines(k);
+        if prep.run == 0 {
+            return;
+        }
 
         // Time signature.
         if prep.time_sig {
@@ -742,49 +973,112 @@ impl SystemEmitter<'_> {
             }
         }
 
-        // Repeat count.
-        if mb.repeat_end > 2 {
-            let label = format!("x{}", mb.repeat_end);
-            let w = text_width(label.len(), 10.0 * s);
+        let label = if ctx.track.is_percussion {
+            Some("Percussion")
+        } else if ctx.no_tab {
+            Some(NO_TAB_LABEL)
+        } else {
+            None
+        };
+        if let Some(label) = label.filter(|_| i == 0) {
             self.out.text(
-                bright - w - 2.0 * s,
-                r.staff_top - 5.0 * s,
+                bx + 2.0 * s,
+                r.chord + 11.0 * s,
                 label,
                 10.0 * s,
-                BOLD,
+                ITALIC,
                 TextAnchor::Leading,
-                Ink::Primary,
+                Ink::Secondary,
             );
         }
 
+        if prep.run >= 2 {
+            let last = &self.bars[k + prep.run as usize - 1];
+            let x0 = bb.beats.first().map_or(bx, |b| b.x);
+            let x1 = last.frame.x + last.frame.width - prep.right;
+            self.multi_rest(x0, x1, prep.run);
+            return;
+        }
         if ctx.track.is_percussion {
-            if i == 0 {
-                self.out.text(
-                    bx + 2.0 * s,
-                    r.chord + 11.0 * s,
-                    "Percussion",
-                    10.0 * s,
-                    ITALIC,
-                    TextAnchor::Leading,
-                    Ink::Secondary,
-                );
-            }
-            // No drum notation yet: one note head per hit on the middle line.
-            let mid = r.staff_top + m.staff_h / 2.0;
-            if let Some((_, voice)) = primary_voice(ctx.bar(i)) {
-                let mut t = 0;
-                for beat in &voice.beats {
-                    if !beat.is_rest() {
-                        self.out.dot(x_at(bb, t), mid, 3.0 * s, Ink::Primary);
-                    }
-                    t += beat.duration.ticks();
-                }
-            }
+            self.drums(k);
         } else {
             self.notes(k);
         }
         if ctx.rhythm {
             self.rhythm(k);
+        }
+    }
+
+    /// A multi-bar rest spanning `x0..x1`: a thick bar with end serifs and the bar count.
+    fn multi_rest(&mut self, x0: f32, x1: f32, count: u32) {
+        let (m, r) = (self.m, self.rows);
+        let s = m.s;
+        let (x0, x1) = (x0 + 4.0 * s, x1 - 6.0 * s);
+        let mx = (x0 + x1) / 2.0;
+        let (y, label_y) = if self.ctx.rhythm {
+            let y = r.stem_top + 15.0 * s;
+            (y, y - 11.0 * s)
+        } else {
+            let y = r.staff_top + m.staff_h / 2.0;
+            self.out
+                .knockout(mx, y - 4.0 * s, x1 - x0 + 4.0 * s, 24.0 * s);
+            (y, y - 11.0 * s)
+        };
+        self.out
+            .rect(x0, y - 2.5 * s, x1 - x0, 5.0 * s, Ink::Primary);
+        for x in [x0, x1] {
+            self.out
+                .line(x, y - 5.0 * s, x, y + 5.0 * s, 1.2 * s, Ink::Primary);
+        }
+        self.out.text(
+            mx,
+            label_y,
+            count.to_string(),
+            12.0 * s,
+            BOLD,
+            TextAnchor::Center,
+            Ink::Primary,
+        );
+    }
+
+    /// Drum notation on the 5-line staff: each hit placed by instrument, cymbals and hi-hats
+    /// as "x", drums as filled heads.
+    fn drums(&mut self, k: usize) {
+        let (ctx, m, r) = (self.ctx, self.m, self.rows);
+        let s = m.s;
+        let bb = &self.bars[k];
+        let bar = ctx.bar(bb.master_bar as usize);
+        let half = m.ls / 2.0;
+        for voice in &bar.voices {
+            let mut t = 0;
+            for beat in &voice.beats {
+                let x = x_at(bb, t);
+                t += beat.duration.ticks();
+                for note in &beat.notes {
+                    let key = ctx.track.pitch(note.string, note.fret).unwrap_or(note.fret);
+                    let (pos, cymbal) = drum_position(key);
+                    let y = r.staff_top + f32::from(pos) * half;
+                    // Ledger lines for heads above the staff's first ledger position.
+                    let mut ledger = -2;
+                    while ledger >= pos {
+                        let ly = r.staff_top + f32::from(ledger) * half;
+                        self.out
+                            .line(x - 7.0 * s, ly, x + 7.0 * s, ly, 0.8 * s, Ink::Secondary);
+                        ledger -= 2;
+                    }
+                    let ink = if note.effects.ghost {
+                        Ink::Secondary
+                    } else {
+                        Ink::Primary
+                    };
+                    if cymbal {
+                        self.out
+                            .text(x, y, "x", 12.0 * s, BOLD, TextAnchor::Center, ink);
+                    } else {
+                        self.out.dot(x, y, 3.6 * s, ink);
+                    }
+                }
+            }
         }
     }
 
@@ -813,6 +1107,25 @@ impl SystemEmitter<'_> {
             }
         }
 
+        // Repeat count.
+        if mb.repeat_end > 2 {
+            let label = format!("x{}", mb.repeat_end);
+            let w = text_width(label.len(), 10.0 * s);
+            self.out.text(
+                right - w - 2.0 * s,
+                r.staff_top - 5.0 * s,
+                label,
+                10.0 * s,
+                BOLD,
+                TextAnchor::Leading,
+                Ink::Primary,
+            );
+        }
+
+        // No bar lines inside a multi-bar rest.
+        if ctx.in_run(i + 1) {
+            return;
+        }
         let final_bar = i + 1 == ctx.score.master_bars.len();
         if mb.repeat_end > 0 {
             for dy in [-dot_dy, dot_dy] {
@@ -861,27 +1174,92 @@ impl SystemEmitter<'_> {
         let primary = primary_voice(bar).map(|(v, _)| v);
         let knock_h = m.fret * 0.95;
 
-        // Fret numbers for every voice.
-        for voice in &bar.voices {
+        // Fret numbers for every voice. A tied note continues the previous note on its string:
+        // on the same system it's a tie arc from that note (no number); at the start of a
+        // system it's written as "(n)".
+        for (v, voice) in bar.voices.iter().enumerate() {
+            // The previous beat in this voice: x, beat, and whether it starts the system.
+            let mut prev = k.checked_sub(1).and_then(|pk| {
+                last_beat(ctx, &self.bars[pk], v).map(|(x, b, n)| (x, b, pk == 0 && n == 1))
+            });
             let mut t = 0;
-            for beat in &voice.beats {
+            for (j, beat) in voice.beats.iter().enumerate() {
                 let x = x_at(bb, t);
                 t += beat.duration.ticks();
                 for note in &beat.notes {
-                    if note.string == 0 || usize::from(note.string) > m.lines {
+                    if !ctx.shown(note) {
                         continue;
                     }
                     let y = r.string_y(m, note.string);
+                    let origin =
+                        prev.filter(|_| note.tie_destination)
+                            .and_then(|(px, pb, start)| {
+                                let on = pb.notes.iter().find(|n| n.string == note.string)?;
+                                Some((px, on, start))
+                            });
+                    if let Some((px, on, start)) = origin {
+                        let drawn = !on.tie_destination || start;
+                        let x1 = if drawn {
+                            px + text_width(label_len(on), m.fret) / 2.0 + 1.0 * s
+                        } else {
+                            px
+                        };
+                        let x2 = x - 1.0 * s;
+                        self.out.curve(
+                            x1,
+                            y + 4.0 * s,
+                            (x1 + x2) / 2.0,
+                            y + 10.0 * s,
+                            x2,
+                            y + 4.0 * s,
+                            1.0 * s,
+                        );
+                        continue;
+                    }
                     let label = note_label(note);
                     let w = text_width(label.chars().count(), m.fret);
                     self.out.knockout(x, y, w + 2.0 * s, knock_h);
-                    let ink = if note.effects.ghost || note.tie_destination {
-                        Ink::Secondary
+                    let (ink, style) = if note.effects.ghost || note.tie_destination {
+                        (Ink::Secondary, PLAIN)
                     } else {
-                        Ink::Primary
+                        (Ink::Primary, BOLD)
                     };
                     self.out
-                        .text(x, y, label, m.fret, PLAIN, TextAnchor::Center, ink);
+                        .text(x, y, label, m.fret, style, TextAnchor::Center, ink);
+                }
+                prev = Some((x, beat, k == 0 && j == 0));
+            }
+            // Ties into the next system: an open arc to the end of the staff.
+            if k + 1 == self.bars.len()
+                && let Some((px, pb, start)) = prev
+                && let Some(next) = ctx.bar(i + 1).voices.get(v).and_then(|nv| nv.beats.first())
+            {
+                let x2 = bb.frame.x + bb.frame.width + 2.0 * s;
+                for note in next.notes.iter().filter(|n| n.tie_destination) {
+                    let Some(on) = pb
+                        .notes
+                        .iter()
+                        .find(|n| n.string == note.string && ctx.shown(n))
+                    else {
+                        continue;
+                    };
+                    let y = r.string_y(m, note.string);
+                    let x1 = if !on.tie_destination || start {
+                        px + text_width(label_len(on), m.fret) / 2.0 + 1.0 * s
+                    } else {
+                        px
+                    };
+                    if x2 > x1 {
+                        self.out.curve(
+                            x1,
+                            y + 4.0 * s,
+                            (x1 + x2) / 2.0,
+                            y + 10.0 * s,
+                            x2,
+                            y + 6.0 * s,
+                            1.0 * s,
+                        );
+                    }
                 }
             }
         }
@@ -923,7 +1301,7 @@ impl SystemEmitter<'_> {
             }
             let (mut vibrato, mut bend) = (false, false);
             for note in &beat.notes {
-                if note.string == 0 || usize::from(note.string) > m.lines {
+                if !ctx.shown(note) {
                     continue;
                 }
                 vibrato |= note.effects.vibrato;
@@ -1296,10 +1674,16 @@ impl SystemEmitter<'_> {
                 2 => self.out.line(x, mid, x, bot, 1.0 * s, Ink::Primary),
                 _ => self.out.line(x, top, x, bot, 1.0 * s, Ink::Primary),
             }
+            // Dots after the stem, clear of any beams.
+            let dot_y = if levels > 0 {
+                bot - beam_h - 3.0 * s
+            } else {
+                bot - 2.0 * s
+            };
             for n in 0..d.dots {
                 self.out.dot(
-                    x + (4.0 + 3.5 * f32::from(n)) * s,
-                    bot + 4.0 * s,
+                    x + (3.5 + 3.5 * f32::from(n)) * s,
+                    dot_y,
                     1.3 * s,
                     Ink::Primary,
                 );
@@ -1335,11 +1719,24 @@ impl SystemEmitter<'_> {
                     g.2 = x;
                     g.3 += d.ticks();
                     if g.3 >= g.4 || g.0 != n {
-                        let label = g.0.to_string();
+                        let (x0, x1) = (g.1, g.2);
+                        let mx = (x0 + x1) / 2.0;
+                        let ty = bot + 10.0 * s;
+                        // A bracket under the group, broken for the number.
+                        if x1 - x0 > 16.0 * s {
+                            let by = ty;
+                            let gap = 5.0 * s;
+                            let hook = 3.0 * s;
+                            let ink = Ink::Secondary;
+                            self.out.line(x0, by - hook, x0, by, 0.8 * s, ink);
+                            self.out.line(x0, by, mx - gap, by, 0.8 * s, ink);
+                            self.out.line(mx + gap, by, x1, by, 0.8 * s, ink);
+                            self.out.line(x1, by, x1, by - hook, 0.8 * s, ink);
+                        }
                         self.out.text(
-                            (g.1 + g.2) / 2.0,
-                            bot + 9.0 * s,
-                            label,
+                            mx,
+                            ty,
+                            g.0.to_string(),
                             9.0 * s,
                             ITALIC,
                             TextAnchor::Center,
@@ -1358,8 +1755,17 @@ impl SystemEmitter<'_> {
 fn rest(out: &mut Out, s: f32, x: f32, y: f32, value: u8, dots: u8) {
     let w = 1.6 * s;
     match value {
-        0 | 1 => out.rect(x - 4.0 * s, y - 4.0 * s, 8.0 * s, 3.0 * s, Ink::Primary),
-        2 => out.rect(x - 4.0 * s, y - 1.0 * s, 8.0 * s, 3.0 * s, Ink::Primary),
+        // Whole rest: a block hanging from a short line; half rest: a block sitting on one.
+        0 | 1 => {
+            let ly = y - 3.0 * s;
+            out.line(x - 6.5 * s, ly, x + 6.5 * s, ly, 1.0 * s, Ink::Primary);
+            out.rect(x - 4.5 * s, ly, 9.0 * s, 3.5 * s, Ink::Primary);
+        }
+        2 => {
+            let ly = y + 1.0 * s;
+            out.line(x - 6.5 * s, ly, x + 6.5 * s, ly, 1.0 * s, Ink::Primary);
+            out.rect(x - 4.5 * s, ly - 3.5 * s, 9.0 * s, 3.5 * s, Ink::Primary);
+        }
         4 => {
             let pts = [
                 (-1.5, -8.0),
@@ -1414,6 +1820,33 @@ fn rest(out: &mut Out, s: f32, x: f32, y: f32, value: u8, dots: u8) {
             Ink::Primary,
         );
     }
+}
+
+/// Staff position of a General MIDI drum note, in half line-spaces below the top line
+/// (negative = above the staff), and whether it's drawn as a cymbal "x".
+fn drum_position(key: u8) -> (i8, bool) {
+    match key {
+        35 | 36 => (7, false),           // kick: bottom space
+        37..=40 => (3, false),           // snare, side stick, clap
+        41 => (6, false),                // low floor tom
+        43 => (5, false),                // floor tom
+        45 | 47 => (2, false),           // mid toms
+        48 | 50 => (1, false),           // high toms
+        42 | 46 => (-1, true),           // hi-hat closed / open: above the staff
+        44 => (9, true),                 // pedal hi-hat: below the staff
+        49 | 52 | 55 | 57 => (-2, true), // crash, china, splash: ledger line
+        51 | 59 => (0, true),            // ride: top line
+        53 => (0, false),                // ride bell
+        _ => (4, false),
+    }
+}
+
+/// The last beat of voice `v` in a laid-out bar: its x, the beat, and the voice's beat count.
+fn last_beat<'b>(ctx: &'b Ctx, bb: &BarBox, v: usize) -> Option<(f32, &'b Beat, usize)> {
+    let beats = &ctx.bar(bb.master_bar as usize).voices.get(v)?.beats;
+    let last = beats.last()?;
+    let total: u32 = beats.iter().map(|b| b.duration.ticks()).sum();
+    Some((x_at(bb, total - last.duration.ticks()), last, beats.len()))
 }
 
 /// x of the column for `tick` in a laid-out bar (nearest column if there's no exact onset).
