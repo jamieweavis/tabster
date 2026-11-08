@@ -74,6 +74,20 @@ logs level="debug":
 logs-recent period="1h":
     log show --style compact --info --last {{period}} --predicate 'subsystem == "{{bundle_id}}"'
 
+# Download the bundled GM SoundFont (GeneralUser GS 2.0.3, ~32 MB) into Resources/Bundle/
+soundfont:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="Resources/Bundle/SoundFont.sf2"
+    sha="9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe"
+    if [ -f "$out" ] && echo "$sha  $out" | shasum -a 256 -c --status; then
+        echo "$out is up to date"; exit 0
+    fi
+    url="https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/684543d5e5efaef08d02be50dcda8d552478fa60/GeneralUser-GS.sf2"
+    curl -fL --retry 3 -o "$out.part" "$url"
+    echo "$sha  $out.part" | shasum -a 256 -c
+    mv "$out.part" "$out"
+
 # Run all tests
 test:
     cargo test --workspace
