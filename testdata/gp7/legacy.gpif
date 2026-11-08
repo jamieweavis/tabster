@@ -1,0 +1,331 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Self-authored GP6-style GPIF: track-level properties, GeneralMidi, a drum kit with
+     element/variation notes, a two-staff piano, an anacrusis, voice placeholders and a few
+     deliberately dangling references. -->
+<GPIF>
+  <GPVersion>6</GPVersion>
+  <Encoding>
+    <EncodingDescription>GP6</EncodingDescription>
+  </Encoding>
+  <Score>
+    <Title><![CDATA[Legacy Layout]]></Title>
+    <Artist><![CDATA[The Fixtures]]></Artist>
+    <WordsAndMusic><![CDATA[Tabster Authors]]></WordsAndMusic>
+  </Score>
+  <MasterTrack>
+    <Tracks>0 1 2</Tracks>
+    <Anacrusis />
+    <Automations>
+      <Automation>
+        <Type>Tempo</Type>
+        <Linear>false</Linear>
+        <Bar>1</Bar>
+        <Position>0.25</Position>
+        <Value>180 1</Value>
+      </Automation>
+      <Automation>
+        <Type>Tempo</Type>
+        <Linear>false</Linear>
+        <Bar>0</Bar>
+        <Position>0</Position>
+        <Value>100</Value>
+      </Automation>
+    </Automations>
+  </MasterTrack>
+  <Tracks>
+    <Track id="0">
+      <Name><![CDATA[Rhythm]]></Name>
+      <ShortName><![CDATA[R.Gtr]]></ShortName>
+      <Instrument ref="e-gtr6" />
+      <GeneralMidi table="Instrument">
+        <Program>25</Program>
+        <Port>0</Port>
+        <PrimaryChannel>0</PrimaryChannel>
+        <SecondaryChannel>1</SecondaryChannel>
+      </GeneralMidi>
+      <Properties>
+        <Property name="Tunning">
+          <Pitches>38 45 50 55 59 64</Pitches>
+        </Property>
+        <Property name="CapoFret">
+          <Fret>0</Fret>
+        </Property>
+        <Property name="DiagramCollection">
+          <Items>
+            <Item id="3" name="D5" />
+          </Items>
+        </Property>
+      </Properties>
+    </Track>
+    <Track id="1">
+      <Name><![CDATA[Drums]]></Name>
+      <Instrument ref="drmkt" />
+      <GeneralMidi table="Percussion">
+        <Program>0</Program>
+        <PrimaryChannel>9</PrimaryChannel>
+      </GeneralMidi>
+    </Track>
+    <Track id="2">
+      <Name><![CDATA[Piano]]></Name>
+      <Instrument ref="pno-gs" />
+      <GeneralMidi table="Instrument">
+        <Program>0</Program>
+        <PrimaryChannel>2</PrimaryChannel>
+      </GeneralMidi>
+    </Track>
+    <Track id="9">
+      <Name><![CDATA[Not in the master track]]></Name>
+    </Track>
+  </Tracks>
+  <MasterBars>
+    <MasterBar>
+      <Time>2/4</Time>
+      <Key>
+        <AccidentalCount>-2</AccidentalCount>
+      </Key>
+      <Bars>0 1 2 3</Bars>
+    </MasterBar>
+    <MasterBar>
+      <Time>4/4</Time>
+      <Key>
+        <AccidentalCount>-2</AccidentalCount>
+      </Key>
+      <Repeat start="true" end="true" count="3" />
+      <Directions>
+        <Target>Fine</Target>
+        <Jump>DaCapoAlFine</Jump>
+        <Jump>NotARealJump</Jump>
+      </Directions>
+      <Bars>4 5 6 7</Bars>
+    </MasterBar>
+    <MasterBar>
+      <Time>4/4</Time>
+      <Bars>404 5</Bars>
+    </MasterBar>
+  </MasterBars>
+  <Bars>
+    <Bar id="0">
+      <Voices>0 -1 -1 -1</Voices>
+    </Bar>
+    <Bar id="1">
+      <Voices>1 -1 -1 -1</Voices>
+    </Bar>
+    <Bar id="2">
+      <Voices>2 -1 -1 -1</Voices>
+    </Bar>
+    <Bar id="3">
+      <Voices>3 -1 -1 -1</Voices>
+    </Bar>
+    <Bar id="4">
+      <Voices>-1 4 -1 -1</Voices>
+    </Bar>
+    <Bar id="5">
+      <Voices>5 -1 -1 -1</Voices>
+    </Bar>
+    <Bar id="6">
+      <Voices>6 -1 -1 -1</Voices>
+    </Bar>
+    <Bar id="7">
+      <Voices>3 -1 -1 -1</Voices>
+    </Bar>
+  </Bars>
+  <Voices>
+    <Voice id="0">
+      <Beats>0 1</Beats>
+    </Voice>
+    <Voice id="1">
+      <Beats>2 2</Beats>
+    </Voice>
+    <Voice id="2">
+      <Beats>3</Beats>
+    </Voice>
+    <Voice id="3">
+      <Beats>9</Beats>
+    </Voice>
+    <Voice id="4">
+      <Beats>4 404 5</Beats>
+    </Voice>
+    <Voice id="5">
+      <Beats>6 7</Beats>
+    </Voice>
+    <Voice id="6">
+      <Beats>8</Beats>
+    </Voice>
+  </Voices>
+  <Beats>
+    <Beat id="0">
+      <Rhythm ref="0" />
+      <Chord>3</Chord>
+      <Notes>0 1</Notes>
+      <Arpeggio>Down</Arpeggio>
+    </Beat>
+    <Beat id="1">
+      <Rhythm ref="0" />
+      <Notes>2 404</Notes>
+      <Whammy originValue="0" middleValue="0" destinationValue="-100" originOffset="0" middleOffset1="0" middleOffset2="0" destinationOffset="100" />
+    </Beat>
+    <Beat id="2">
+      <Rhythm ref="0" />
+      <Notes>10 11</Notes>
+    </Beat>
+    <Beat id="3">
+      <Rhythm ref="1" />
+      <Notes>20</Notes>
+    </Beat>
+    <Beat id="4">
+      <Rhythm ref="2" />
+      <Dynamic>FFF</Dynamic>
+      <Notes>3</Notes>
+    </Beat>
+    <Beat id="5">
+      <Rhythm ref="404" />
+      <Notes>3</Notes>
+    </Beat>
+    <Beat id="6">
+      <Rhythm ref="2" />
+      <Dynamic>PPP</Dynamic>
+      <Notes>12</Notes>
+    </Beat>
+    <Beat id="7">
+      <Rhythm ref="2" />
+      <Notes>13</Notes>
+    </Beat>
+    <Beat id="8">
+      <Rhythm ref="3" />
+      <Notes>21 22</Notes>
+    </Beat>
+    <Beat id="9">
+      <Rhythm ref="1" />
+    </Beat>
+  </Beats>
+  <Notes>
+    <Note id="0">
+      <Properties>
+        <Property name="String">
+          <String>0</String>
+        </Property>
+        <Property name="Fret">
+          <Fret>0</Fret>
+        </Property>
+      </Properties>
+    </Note>
+    <Note id="1">
+      <Properties>
+        <Property name="String">
+          <String>1</String>
+        </Property>
+        <Property name="Fret">
+          <Fret>0</Fret>
+        </Property>
+      </Properties>
+    </Note>
+    <Note id="2">
+      <Properties>
+        <Property name="Midi">
+          <Number>67</Number>
+        </Property>
+      </Properties>
+    </Note>
+    <Note id="3">
+      <Properties>
+        <Property name="String">
+          <String>9</String>
+        </Property>
+        <Property name="Fret">
+          <Fret>1</Fret>
+        </Property>
+        <Property name="ConcertPitch">
+          <Pitch>
+            <Step>F</Step>
+            <Accidental>#</Accidental>
+            <Octave>3</Octave>
+          </Pitch>
+        </Property>
+      </Properties>
+    </Note>
+    <Note id="10">
+      <Properties>
+        <Property name="Element">
+          <Element>0</Element>
+        </Property>
+        <Property name="Variation">
+          <Variation>0</Variation>
+        </Property>
+      </Properties>
+    </Note>
+    <Note id="11">
+      <Properties>
+        <Property name="Element">
+          <Element>10</Element>
+        </Property>
+        <Property name="Variation">
+          <Variation>2</Variation>
+        </Property>
+      </Properties>
+    </Note>
+    <Note id="12">
+      <Properties>
+        <Property name="Element">
+          <Element>1</Element>
+        </Property>
+        <Property name="Variation">
+          <Variation>2</Variation>
+        </Property>
+      </Properties>
+    </Note>
+    <Note id="13">
+      <Properties>
+        <Property name="Element">
+          <Element>15</Element>
+        </Property>
+        <Property name="Variation">
+          <Variation>2</Variation>
+        </Property>
+      </Properties>
+    </Note>
+    <Note id="20">
+      <Properties>
+        <Property name="Midi">
+          <Number>60</Number>
+        </Property>
+      </Properties>
+    </Note>
+    <Note id="21">
+      <Properties>
+        <Property name="Octave">
+          <Number>5</Number>
+        </Property>
+        <Property name="Tone">
+          <Step>4</Step>
+        </Property>
+      </Properties>
+    </Note>
+    <Note id="22">
+      <Properties>
+        <Property name="ConcertPitch">
+          <Pitch>
+            <Step>B</Step>
+            <Accidental>b</Accidental>
+            <Octave>4</Octave>
+          </Pitch>
+        </Property>
+      </Properties>
+    </Note>
+  </Notes>
+  <Rhythms>
+    <Rhythm id="0">
+      <NoteValue>Quarter</NoteValue>
+    </Rhythm>
+    <Rhythm id="1">
+      <NoteValue>Half</NoteValue>
+    </Rhythm>
+    <Rhythm id="2">
+      <NoteValue>Eighth</NoteValue>
+      <AugmentationDot count="2" />
+      <PrimaryTuplet num="5" den="4" />
+    </Rhythm>
+    <Rhythm id="3">
+      <NoteValue>DoubleWhole</NoteValue>
+    </Rhythm>
+  </Rhythms>
+</GPIF>
