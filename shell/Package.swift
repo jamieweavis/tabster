@@ -17,10 +17,21 @@ let package = Package(
                 .linkedFramework("CoreServices"),  // notify (FSEvents)
             ]
         ),
+        // Pure Swift logic with no FFI or UI dependency (e.g. the video clock), so it can be unit-tested.
+        .target(
+            name: "TabsterKit",
+            path: "Sources/TabsterKit"
+        ),
         .executableTarget(
             name: "Tabster",
-            dependencies: ["tabster_coreFFI"],
+            dependencies: ["tabster_coreFFI", "TabsterKit"],
             path: "Sources/Tabster"
+        ),
+        .testTarget(
+            name: "TabsterKitTests",
+            dependencies: ["TabsterKit"],
+            path: "Tests/TabsterKitTests",
+            resources: [.copy("Resources")]
         ),
     ]
 )

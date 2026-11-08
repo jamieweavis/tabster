@@ -78,6 +78,10 @@ logs-recent period="1h":
 test:
     cargo test --workspace
 
+# Run the Swift shell's unit tests (TabsterKit). Builds the whole package, so it needs the core.
+test-swift: bindings
+    swift test --package-path shell -Xlinker -L{{rust_out}}
+
 # Format Rust code
 fmt:
     cargo fmt --all
@@ -88,7 +92,7 @@ lint:
     cargo clippy --workspace --all-targets -- -D warnings
 
 # Run everything CI runs
-check: lint test app
+check: lint test test-swift app
 
 clean:
     cargo clean
