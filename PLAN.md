@@ -296,3 +296,21 @@ Phase 5  O packaging │ P perf/fuzz                                    (2 paral
   - Tabs remain the user's own files.
   - alphaTab is MPL-2.0, so porting logic from it is fine at file level. Note this in file headers.
   - Bundle only a SoundFont whose licence allows redistribution, such as GeneralUser GS or TimGM6mb.
+
+---
+
+## Status (2026-11-08)
+
+Phases 0–5 are built and merged on `main`; `just check` is green: 207 Rust tests (plus `#[ignore]`d
+real-tab and benchmark tests), 35 Swift tests, and the signed app build.
+
+Not done yet:
+- From Phase 6: GP3/GP4 and MusicXML import, writing sync points back into `.gp` files, setlist
+  export, and the iPad shell.
+- Known gaps:
+  - Synth has no pitch bends or slides.
+  - Lyrics aren't shown.
+  - The video keeps playing past the tab's start and end.
+  - The video/tab split size isn't remembered.
+  - Keyboard and mouse input and the toolbar menus and sheets haven't been tested by driving them
+    for real.
