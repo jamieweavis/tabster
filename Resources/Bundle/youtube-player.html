@@ -1,20 +1,24 @@
 <!doctype html>
 <!--
-  Tabster YouTube player page. Hosted in a WKWebView; see spikes/youtube/FINDINGS.md.
+  Tabster YouTube player page, hosted in a WKWebView by YouTubePlayerController
+  (shell/Sources/Tabster/Video/). See PLAN.md §0 "YouTube embedding" and spikes/youtube/.
 
   Load it with a real http(s) origin (loadHTMLString + baseURL, or the localhost server) so the
   embed gets a Referer; without one YouTube fails with error 153.
 
   JS -> Swift: window.webkit.messageHandlers.player.postMessage({type, ...})
-    apiReady                                    IFrame API script loaded
+    apiReady                                    IFrame API script loaded; window.tabster is usable
     ready      {origin, videoId, rates, duration}
-    stateChange {state, name}                   -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued
+    stateChange {state, name, t, duration}      -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued
     rate       {rate}                           playback rate actually applied
-    error      {code}                           2 bad id, 5 html5, 100 not found, 101/150 no embed, 153 no referrer
-    time       {t, perf, epoch, state, rate}    high-rate sample while playing (rAF by default)
+    error      {code}                           2 bad id, 5 html5, 100 not found, 101/150 no embed,
+                                                153 no referrer, -1 iframe_api didn't load
+    time       {t, perf, epoch, state, rate}    every 100 ms while playing, and on every transition
+    autoplayBlocked                             autoplay was refused
     log / jsError {msg}
 
-  Swift -> JS: window.tabster.{load, play, pause, seek, setRate, rates, currentTime, state, ...}
+  Swift -> JS: window.tabster.{load, play, pause, seek, setRate, setMuted, setVolume, rates,
+               currentTime, state, duration, setReporter, snapshot}
 -->
 <html>
 <head>
@@ -52,14 +56,16 @@
   let player = null;
   let playerHost = null;
   let currentId = null;
-  let reporter = { mode: "raf", ms: 100, handle: null };
+  // The shell extrapolates between samples, so 100 ms is plenty (and, unlike rAF, keeps
+  // running while the view is hidden).
+  let reporter = { mode: "interval", ms: 100, handle: null };
   let lastState = -1;
 
   function defaults(opts) {
     return Object.assign({
       host: params.get("host") || "https://www.youtube.com",
       autoplay: true,
-      mute: true,
+      mute: false,
       controls: 1,
       iframe: params.get("iframe") || "manual",   // "manual": we build the <iframe>; "api": YT.Player does
     }, opts || {});
@@ -117,7 +123,8 @@
 
   function onState(s) {
     lastState = s;
-    post({ type: "stateChange", state: s, name: STATE_NAMES[s] || String(s), t: safe(() => player.getCurrentTime(), 0) });
+    post({ type: "stateChange", state: s, name: STATE_NAMES[s] || String(s), t: safe(() => player.getCurrentTime(), 0),
+           duration: safe(() => player.getDuration(), 0) });
     sample();                         // anchor immediately on every transition
     if (s === 1) startReporter(); else stopReporter();
   }
