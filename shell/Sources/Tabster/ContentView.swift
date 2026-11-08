@@ -1,17 +1,91 @@
 import SwiftUI
 
+/// The main window: library sidebar, tab table, and the open tab.
 struct ContentView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        VStack(spacing: 8) {
-            Text("Tabster").font(.largeTitle)
+        Group {
             if let core = model.core {
-                Text("Core \(core.version())").foregroundStyle(.secondary)
+                LibraryView(core: core)
             } else {
-                Text(model.startupError ?? "Core failed to start").foregroundStyle(.red)
+                ContentUnavailableView {
+                    Label("Tabster Couldn't Start", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(model.startupError ?? "The library couldn't be opened.")
+                } actions: {
+                    Button("Quit Tabster") { NSApp.terminate(nil) }
+                }
             }
         }
-        .frame(minWidth: 600, minHeight: 400)
+        .frame(minWidth: 1000, minHeight: 650)
+    }
+}
+
+struct LibraryView: View {
+    let core: Core
+    @Environment(AppModel.self) private var model
+    @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var isDropTargeted = false
+    @FocusState private var searchFocused: Bool
+
+    var body: some View {
+        @Bindable var model = model
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            LibrarySidebar()
+                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
+        } content: {
+            TabTable()
+                .searchable(text: $model.searchText, prompt: "Title, artist or album")
+                .searchFocused($searchFocused)
+                .navigationSplitViewColumnWidth(min: 480, ideal: 600)
+        } detail: {
+            if let id = model.selection {
+                TabViewer(core: core, tabID: id)
+                    .id(id)
+            } else {
+                ContentUnavailableView(
+                    "No Tab Selected",
+                    systemImage: "music.note.list",
+                    description: Text("Choose a tab from the library to open it.")
+                )
+            }
+        }
+        .toolbar {
+            if let progress = model.importProgress {
+                ToolbarItem(placement: .status) {
+                    ImportProgressView(progress: progress)
+                }
+            }
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            let files = urls.filter(\.isFileURL)
+            model.importURLs(files)
+            return !files.isEmpty
+        } isTargeted: { isDropTargeted = $0 }
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.accentColor, lineWidth: 3)
+                    .padding(4)
+                    .allowsHitTesting(false)
+            }
+        }
+        .onChange(of: model.searchFocusRequest) { searchFocused = true }
+        .sheet(isPresented: Binding(
+            get: { !model.importFailures.isEmpty },
+            set: { if !$0 { model.importFailures = [] } }
+        )) {
+            ImportFailuresSheet(failures: model.importFailures)
+        }
+        .alert(
+            "Something Went Wrong",
+            isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } }),
+            presenting: model.errorMessage
+        ) { _ in
+            Button("OK") {}
+        } message: { message in
+            Text(message)
+        }
     }
 }
