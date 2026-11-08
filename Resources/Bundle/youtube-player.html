@@ -1,0 +1,209 @@
+<!doctype html>
+<!--
+  Tabster YouTube player page. Hosted in a WKWebView; see spikes/youtube/FINDINGS.md.
+
+  Load it with a real http(s) origin (loadHTMLString + baseURL, or the localhost server) so the
+  embed gets a Referer; without one YouTube fails with error 153.
+
+  JS -> Swift: window.webkit.messageHandlers.player.postMessage({type, ...})
+    apiReady                                    IFrame API script loaded
+    ready      {origin, videoId, rates, duration}
+    stateChange {state, name}                   -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued
+    rate       {rate}                           playback rate actually applied
+    error      {code}                           2 bad id, 5 html5, 100 not found, 101/150 no embed, 153 no referrer
+    time       {t, perf, epoch, state, rate}    high-rate sample while playing (rAF by default)
+    log / jsError {msg}
+
+  Swift -> JS: window.tabster.{load, play, pause, seek, setRate, rates, currentTime, state, ...}
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Tabster Player</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #player, iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+</style>
+</head>
+<body>
+<div id="player"></div>
+<script>
+(() => {
+  "use strict";
+
+  const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.player;
+  const post = (msg) => {
+    try { if (bridge) bridge.postMessage(msg); else console.log("[tabster]", msg); } catch (_) {}
+  };
+  window.addEventListener("error", (e) => post({ type: "jsError", msg: String(e.message || e) }));
+
+  const STATE_NAMES = { "-1": "unstarted", 0: "ended", 1: "playing", 2: "paused", 3: "buffering", 5: "cued" };
+  const params = new URLSearchParams(location.search);
+
+  // The page's own origin is what YouTube checks against `origin=` and the Referer. It must be an
+  // http(s) origin with a hostname: an IP literal such as 127.0.0.1 gets error 150, and file://
+  // (WKWebView reports origin "file://") never gets a `ready`. Otherwise omit `origin`.
+  const pageOrigin = /^https?:$/.test(location.protocol) ? location.origin : null;
+
+  let apiReady = false;
+  let pending = null;        // load() called before the API script arrived
+  let player = null;
+  let playerHost = null;
+  let currentId = null;
+  let reporter = { mode: "raf", ms: 100, handle: null };
+  let lastState = -1;
+
+  function defaults(opts) {
+    return Object.assign({
+      host: params.get("host") || "https://www.youtube.com",
+      autoplay: true,
+      mute: true,
+      controls: 1,
+      iframe: params.get("iframe") || "manual",   // "manual": we build the <iframe>; "api": YT.Player does
+    }, opts || {});
+  }
+
+  function playerVars(o, startSecs) {
+    const v = {
+      enablejsapi: 1, playsinline: 1, controls: o.controls, rel: 0, modestbranding: 1,
+      autoplay: o.autoplay ? 1 : 0, mute: o.mute ? 1 : 0,
+    };
+    if (startSecs > 0) v.start = Math.floor(startSecs);
+    if (pageOrigin) { v.origin = pageOrigin; v.widget_referrer = pageOrigin + "/"; }
+    return v;
+  }
+
+  function create(id, startSecs, o) {
+    const mount = document.getElementById("player");
+    const events = {
+      onReady: onReady,
+      onStateChange: (e) => onState(e.data),
+      onError: (e) => post({ type: "error", code: e.data }),
+      onPlaybackRateChange: (e) => post({ type: "rate", rate: e.data }),
+      onAutoplayBlocked: () => post({ type: "autoplayBlocked" }),
+    };
+    const vars = playerVars(o, startSecs);
+    if (o.iframe === "manual") {
+      const f = document.createElement("iframe");
+      f.id = "player";
+      const qs = new URLSearchParams(Object.entries(vars).map(([k, x]) => [k, String(x)]));
+      f.src = `${o.host}/embed/${encodeURIComponent(id)}?${qs}`;
+      f.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+      f.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture; fullscreen");
+      f.setAttribute("allowfullscreen", "");
+      f.setAttribute("frameborder", "0");
+      mount.replaceWith(f);
+      player = new YT.Player(f, { events });
+    } else {
+      player = new YT.Player(mount, { host: o.host, videoId: id, playerVars: vars, events });
+    }
+    playerHost = o.host;
+  }
+
+  function onReady() {
+    if (pending && pending.o.mute) player.mute();
+    let rates = [];
+    try { rates = player.getAvailablePlaybackRates(); } catch (_) {}
+    post({
+      type: "ready", origin: pageOrigin, href: location.href, videoId: currentId, rates,
+      duration: safe(() => player.getDuration(), 0),
+      iframeSrc: safe(() => player.getIframe().src, null),
+    });
+    if (pending && pending.o.autoplay) player.playVideo();
+    pending = null;
+  }
+
+  function onState(s) {
+    lastState = s;
+    post({ type: "stateChange", state: s, name: STATE_NAMES[s] || String(s), t: safe(() => player.getCurrentTime(), 0) });
+    sample();                         // anchor immediately on every transition
+    if (s === 1) startReporter(); else stopReporter();
+  }
+
+  function safe(fn, dflt) { try { return fn(); } catch (_) { return dflt; } }
+
+  function sample() {
+    if (!player || !player.getCurrentTime) return;
+    const perf = performance.now();
+    post({
+      type: "time", t: player.getCurrentTime(), perf, epoch: performance.timeOrigin + perf,
+      state: lastState, rate: safe(() => player.getPlaybackRate(), 1),
+    });
+  }
+
+  function startReporter() {
+    stopReporter();
+    if (reporter.mode === "off") return;
+    if (reporter.mode === "raf") {
+      const loop = () => { sample(); reporter.handle = requestAnimationFrame(loop); };
+      reporter.handle = requestAnimationFrame(loop);
+    } else {
+      reporter.handle = setInterval(sample, reporter.ms);
+    }
+  }
+
+  function stopReporter() {
+    if (reporter.handle == null) return;
+    if (reporter.mode === "raf") cancelAnimationFrame(reporter.handle); else clearInterval(reporter.handle);
+    reporter.handle = null;
+  }
+
+  window.onYouTubeIframeAPIReady = () => {
+    apiReady = true;
+    post({ type: "apiReady", origin: pageOrigin, href: location.href });
+    if (pending) create(pending.id, pending.start, pending.o);
+  };
+
+  window.tabster = {
+    /** Load (or switch to) a video. opts: {host, autoplay, mute, controls, iframe}. */
+    load(id, startSecs, opts) {
+      const o = defaults(opts);
+      const start = startSecs || 0;
+      currentId = id;
+      if (player && apiReady && playerHost === o.host) {
+        if (o.autoplay) player.loadVideoById({ videoId: id, startSeconds: start });
+        else player.cueVideoById({ videoId: id, startSeconds: start });
+        return true;
+      }
+      if (player) { stopReporter(); safe(() => player.destroy()); player = null;
+        const d = document.createElement("div"); d.id = "player";
+        const old = document.getElementById("player"); if (old) old.replaceWith(d); else document.body.appendChild(d); }
+      pending = { id, start, o };
+      if (apiReady) create(id, start, o);
+      return true;
+    },
+    play() { if (player) player.playVideo(); },
+    pause() { if (player) player.pauseVideo(); },
+    seek(secs) { if (player) { player.seekTo(secs, true); sample(); } },
+    /** Returns the rate YouTube will apply (it snaps to getAvailablePlaybackRates()). */
+    setRate(r) { if (!player) return 1; player.setPlaybackRate(r); return player.getPlaybackRate(); },
+    rates() { return player ? player.getAvailablePlaybackRates() : []; },
+    currentTime() { return player && player.getCurrentTime ? player.getCurrentTime() : 0; },
+    state() { return lastState; },
+    duration() { return player ? player.getDuration() : 0; },
+    setMuted(m) { if (player) { if (m) player.mute(); else player.unMute(); } },
+    setVolume(v) { if (player) player.setVolume(v); },
+    /** "raf" (every frame), a number of ms (setInterval), or "off". */
+    setReporter(mode) {
+      if (typeof mode === "number") { reporter.mode = "interval"; reporter.ms = mode; } else reporter.mode = mode;
+      if (lastState === 1) startReporter();
+    },
+    /** Clock probe for latency measurement. */
+    snapshot() {
+      const perf = performance.now();
+      return { t: this.currentTime(), perf, epoch: performance.timeOrigin + perf, state: lastState };
+    },
+  };
+
+  const tag = document.createElement("script");
+  tag.src = "https://www.youtube.com/iframe_api";
+  tag.onerror = () => post({ type: "error", code: -1, msg: "iframe_api failed to load" });
+  document.head.appendChild(tag);
+
+  if (params.get("v")) window.tabster.load(params.get("v"), Number(params.get("start") || 0));
+})();
+</script>
+</body>
+</html>
