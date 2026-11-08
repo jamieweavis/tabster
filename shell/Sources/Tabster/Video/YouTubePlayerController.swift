@@ -55,6 +55,10 @@ final class YouTubePlayerController {
     @ObservationIgnored var onSample: ((Double, Double) -> Void)?
     /// Every page event (`type`, body), for diagnostics.
     @ObservationIgnored var onEvent: ((String, [String: Any]) -> Void)?
+    /// The player's state changed (after `state` and the clock are updated).
+    @ObservationIgnored var onStateChange: ((PlaybackState) -> Void)?
+    /// The player failed (after `failure` is set). Not called for the error-153 retry.
+    @ObservationIgnored var onFailure: ((Failure) -> Void)?
 
     @ObservationIgnored private let core: Core?
     @ObservationIgnored private var pending: [(js: String, args: [String: Any])] = []
@@ -62,6 +66,9 @@ final class YouTubePlayerController {
     @ObservationIgnored private var html: String?
     @ObservationIgnored private var readyTimeout: Task<Void, Never>?
     @ObservationIgnored private var lastAutoplay = false
+    /// play()/seek() asked for before the video's player was ready (the page drops them).
+    @ObservationIgnored private var playWhenReady = false
+    @ObservationIgnored private var seekWhenReady: Double?
     @ObservationIgnored private let delegate = NavigationDelegate()
 
     private static let log = Logger(subsystem: "com.jamieweavis.tabster", category: "youtube")
@@ -103,6 +110,8 @@ final class YouTubePlayerController {
         isVideoReady = false
         state = .unstarted
         lastAutoplay = autoplay
+        playWhenReady = false
+        seekWhenReady = nil
         clock.reset(to: startSeconds, at: CACurrentMediaTime())
         // Only the latest load matters.
         pending.removeAll { $0.js.contains("tabster.load") }
@@ -112,14 +121,39 @@ final class YouTubePlayerController {
         ])
     }
 
-    func play() { send("tabster.play()") }
-    func pause() { send("tabster.pause()") }
+    /// Plays now, or as soon as the video's player is ready.
+    func play() {
+        guard isVideoReady else {
+            playWhenReady = true
+            return
+        }
+        send("tabster.play()")
+    }
 
-    /// Seeks; the clock jumps to `seconds` straight away.
+    func pause() {
+        playWhenReady = false
+        send("tabster.pause()")
+    }
+
+    /// Seeks; the clock jumps to `seconds` straight away (the player follows once it's ready).
     func seek(to seconds: Double) {
         let t = max(0, duration > 0 ? min(seconds, duration) : seconds)
         clock.seek(to: t, at: CACurrentMediaTime())
+        guard isVideoReady else {
+            seekWhenReady = t
+            return
+        }
         send("tabster.seek(s)", ["s": t])
+    }
+
+    /// The current video's player exists: run what was asked for before.
+    private func videoBecameReady() {
+        guard !isVideoReady else { return }
+        isVideoReady = true
+        if let t = seekWhenReady { send("tabster.seek(s)", ["s": t]) }
+        if playWhenReady { send("tabster.play()") }
+        seekWhenReady = nil
+        playWhenReady = false
     }
 
     /// Requests a playback rate. `rate` changes when YouTube confirms it.
@@ -217,6 +251,7 @@ final class YouTubePlayerController {
     private func fail(_ f: Failure) {
         failure = f
         Self.log.notice("player failure: \(String(describing: f), privacy: .public)")
+        onFailure?(f)
     }
 
     // MARK: Events
@@ -232,15 +267,18 @@ final class YouTubePlayerController {
             flush()
         case "ready":
             guard msg["videoId"] as? String == videoID else { return }
-            isVideoReady = true
+            videoBecameReady()
             if let rates = msg["rates"] as? [Double], !rates.isEmpty { availableRates = rates }
             if let d = msg["duration"] as? Double, d > 0 { duration = d }
         case "stateChange":
+            // Switching videos on an existing player cues it without another `ready`.
+            if failure == nil { videoBecameReady() }
             let new = PlaybackState(youTubeCode: msg["state"] as? Int ?? -1)
             clock.setState(new, time: msg["t"] as? Double, at: now)
             state = new
             if let d = msg["duration"] as? Double, d > 0 { duration = d }
             if failure != nil, new == .playing { failure = nil }
+            onStateChange?(new)
         case "rate":
             if let r = msg["rate"] as? Double {
                 rate = r

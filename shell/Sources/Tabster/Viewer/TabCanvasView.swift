@@ -202,7 +202,7 @@ final class TabCanvasContainer: NSView, TabCanvasSink {
             ViewerMetrics.frameInterval.add((link.timestamp - lastFrameTimestamp) * 1000)
         }
         lastFrameTimestamp = link.timestamp
-        let cursor = model.frameTick()
+        let cursor = model.frameTick(at: link.targetTimestamp)
         if cursor != self.cursor { moveCursor(cursor, follow: true) }
         ViewerMetrics.tick.add((CACurrentMediaTime() - start) * 1000)
     }
