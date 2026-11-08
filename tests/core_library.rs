@@ -101,7 +101,11 @@ fn imports_folders_in_parallel() {
     assert!(outcomes[19].path.ends_with("a/tab00019.gp5"));
     assert!(outcomes[..20].iter().all(|o| o.error.is_none()));
     assert!(outcomes[20].path.ends_with("broken.gp5") && outcomes[20].error.is_some());
-    assert!(outcomes[21].duplicate && outcomes[21].id == outcomes[0].id);
+    // copy.GP5 has the same content as tab00000.gp5 and they import in parallel, so either can
+    // be the original: exactly one is the duplicate, both resolve to the same tab, neither fails.
+    assert!(outcomes[21].error.is_none());
+    assert!(outcomes[0].duplicate != outcomes[21].duplicate);
+    assert_eq!(outcomes[21].id, outcomes[0].id);
     assert_eq!(tab_count(&core), 20);
 
     assert_eq!(recorder.progress.lock().last(), Some(&(22, 22)));
