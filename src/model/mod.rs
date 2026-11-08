@@ -188,8 +188,14 @@ pub struct Voice {
 }
 
 impl Voice {
+    /// Length in ticks. Grace beats are played in the time of the beat around them, so they
+    /// don't count.
     pub fn ticks(&self) -> u32 {
-        self.beats.iter().map(|b| b.duration.ticks()).sum()
+        self.beats
+            .iter()
+            .filter(|b| !b.effects.grace)
+            .map(|b| b.duration.ticks())
+            .sum()
     }
 }
 
@@ -251,6 +257,7 @@ pub struct BeatEffects {
     pub slap: bool,
     pub pop: bool,
     pub fade_in: bool,
+    /// Tremolo picking speed as a note value (8, 16 or 32).
     pub tremolo_picking: Option<u8>,
     pub whammy: Option<Bend>,
     /// Grace beat played before the main beat.
