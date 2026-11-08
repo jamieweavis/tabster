@@ -1,0 +1,54 @@
+[package]
+name = "tabster-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tabster = { path = ".." }
+
+# Not part of the main workspace (the root excludes `fuzz`): run with `just fuzz`.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "parse_any"
+path = "fuzz_targets/parse_any.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gpif_xml"
+path = "fuzz_targets/gpif_xml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gpx_container"
+path = "fuzz_targets/gpx_container.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gp5_binary"
+path = "fuzz_targets/gp5_binary.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pipeline"
+path = "fuzz_targets/pipeline.rs"
+test = false
+doc = false
+bench = false

@@ -818,3 +818,153 @@ fn rename_setlist_keeps_tabs() {
         Err(LibraryError::NotFound)
     ));
 }
+
+// ---------------------------------------------------------------------------------------------
+// Robustness
+
+#[test]
+fn corrupt_database_is_set_aside_and_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    {
+        let library = Library::open(&data).unwrap();
+        let path = dir.path().join("a.gp5");
+        fs::write(&path, "A|B|C").unwrap();
+        assert!(library.import_with(&path, &fake_parse).error.is_none());
+    }
+    // Garbage over the whole file.
+    let db = data.join("library.sqlite");
+    fs::write(&db, vec![0xA5u8; 64 * 1024]).unwrap();
+    let library = Library::open(&data).expect("a corrupt database must not stop the app");
+    assert!(library.list(&TabFilter::default()).unwrap().is_empty());
+    let aside = fs::read_dir(&data)
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with("library.sqlite.corrupt-"))
+        .count();
+    assert!(aside > 0, "the corrupt database is kept for inspection");
+    // The fresh library works.
+    let path = dir.path().join("b.gp5");
+    fs::write(&path, "D|E|F").unwrap();
+    assert!(library.import_with(&path, &fake_parse).error.is_none());
+}
+
+#[test]
+fn damaged_database_is_set_aside() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    drop(Library::open(&data).unwrap());
+    let db = data.join("library.sqlite");
+    // Keep the header but scribble over the schema page.
+    let mut damaged = fs::read(&db).unwrap();
+    for b in damaged.iter_mut().skip(100).take(2_000) {
+        *b = 0xFF;
+    }
+    fs::write(&db, damaged).unwrap();
+    for suffix in ["-wal", "-shm"] {
+        let _ = fs::remove_file(data.join(format!("library.sqlite{suffix}")));
+    }
+    let library = Library::open(&data).expect("opens fresh");
+    assert!(library.list(&TabFilter::default()).unwrap().is_empty());
+}
+
+#[test]
+fn file_vanishing_before_import_is_an_error_outcome() {
+    let f = Fixture::new();
+    let path = f.file("gone.gp5", "A|B|C");
+    fs::remove_file(&path).unwrap();
+    let outcome = f.library.import_with(&path, &fake_parse);
+    assert!(outcome.id.is_none());
+    assert!(outcome.error.is_some());
+    // A directory where a file was expected.
+    let dir = f.dir.path().join("dir.gp5");
+    fs::create_dir(&dir).unwrap();
+    assert!(f.library.import_with(&dir, &fake_parse).error.is_some());
+    // A FIFO must not block the import forever.
+    let fifo = f.dir.path().join("pipe.gp5");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    assert!(f.library.import_with(&fifo, &fake_parse).error.is_some());
+}
+
+#[test]
+fn file_deleted_while_importing_is_handled() {
+    let f = Fixture::new();
+    let path = f.file("racy.gp5", "A|B|C");
+    // Delete the file while it's being parsed (as if the user emptied the folder meanwhile).
+    let racy = |bytes: &[u8], ext: Option<&str>| {
+        let _ = fs::remove_file(&path);
+        fake_parse(bytes, ext)
+    };
+    let outcome = f.library.import_with(&path, &racy);
+    // The bytes were already read, so the import completes from them.
+    assert_eq!(outcome.error, None);
+    let id = outcome.id.unwrap();
+    assert!(f.library.load_score_with(id, &fake_parse).is_ok());
+}
+
+#[test]
+fn read_only_data_dir_reports_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    drop(Library::open(&data).unwrap());
+    let tabs = data.join("tabs");
+    // `open` restores 0700 on the directories it owns; make the store read-only afterwards.
+    let library = Library::open(&data).unwrap();
+    fs::set_permissions(&tabs, fs::Permissions::from_mode(0o500)).unwrap();
+    let path = dir.path().join("x.gp5");
+    fs::write(&path, "A|B|C").unwrap();
+    let outcome = library.import_with(&path, &fake_parse);
+    fs::set_permissions(&tabs, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(outcome.error.is_some(), "{outcome:?}");
+    assert!(library.list(&TabFilter::default()).unwrap().is_empty());
+
+    // A data dir that can't be created: a clean error.
+    let parent = dir.path().join("locked");
+    fs::create_dir(&parent).unwrap();
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o500)).unwrap();
+    let result = Library::open(&parent.join("data"));
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(result.is_err());
+}
+
+#[test]
+fn concurrent_import_and_delete() {
+    let f = Fixture::new();
+    let paths: Vec<PathBuf> = (0..40)
+        .map(|i| f.file(&format!("t{i}.gp5"), &format!("T{}|A|B", i % 10)))
+        .collect();
+    std::thread::scope(|scope| {
+        for chunk in paths.chunks(10) {
+            let library = &f.library;
+            scope.spawn(move || {
+                for p in chunk {
+                    let _ = library.import_with(p, &fake_parse);
+                }
+            });
+        }
+        for _ in 0..3 {
+            let library = &f.library;
+            scope.spawn(move || {
+                for _ in 0..50 {
+                    if let Ok(tabs) = library.list(&TabFilter::default()) {
+                        for t in tabs {
+                            let _ = library.delete(t.id);
+                            let _ = library.load_score_with(t.id, &fake_parse);
+                        }
+                    }
+                }
+            });
+        }
+    });
+    // Whatever is left is consistent: every listed tab has its file and loads.
+    for t in f.library.list(&TabFilter::default()).unwrap() {
+        assert!(f.library.file_path(t.id).unwrap().is_file());
+        assert!(f.library.load_score_with(t.id, &fake_parse).is_ok());
+    }
+    let outcome = f.library.import_with(&paths[0], &fake_parse);
+    assert_eq!(outcome.error, None);
+}

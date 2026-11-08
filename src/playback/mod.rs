@@ -32,6 +32,10 @@ pub enum SynthError {
     Invalid(String),
 }
 
+/// Most frames [`TabSynth::render`] renders per call (about 6 s), so a bogus frame count from
+/// the shell can't allocate gigabytes.
+pub const MAX_RENDER_FRAMES: u32 = 1 << 18;
+
 /// The last SoundFont loaded, so reopening tabs doesn't re-read ~30 MB.
 static SOUNDFONT_CACHE: Mutex<Option<(PathBuf, Arc<SoundFont>)>> = Mutex::new(None);
 
@@ -138,9 +142,9 @@ impl TabSynth {
     }
 
     /// Render `frames` frames of interleaved stereo at 44.1 kHz, advancing the score clock by
-    /// frames / 44100 × speed while playing.
+    /// frames / 44100 × speed while playing. At most [`MAX_RENDER_FRAMES`] per call.
     pub fn render(&self, frames: u32) -> Vec<f32> {
-        let mut out = vec![0.0; frames as usize * 2];
+        let mut out = vec![0.0; frames.min(MAX_RENDER_FRAMES) as usize * 2];
         self.render_into(&mut out);
         out
     }

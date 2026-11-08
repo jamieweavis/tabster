@@ -195,7 +195,7 @@ impl Voice {
             .iter()
             .filter(|b| !b.effects.grace)
             .map(|b| b.duration.ticks())
-            .sum()
+            .fold(0, u32::saturating_add)
     }
 }
 

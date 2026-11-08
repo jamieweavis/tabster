@@ -108,6 +108,20 @@ lint:
 # Run everything CI runs
 check: lint test test-swift app
 
+# Fuzz a target for `secs` seconds (parse_any, gpif_xml, gpx_container, gp5_binary, pipeline).
+# Needs nightly (`rustup toolchain install nightly --profile minimal`) and `cargo install cargo-fuzz`.
+# Crashes land in fuzz/artifacts/<target>/; keep minimised ones in testdata/regressions/<target>/.
+fuzz target="parse_any" secs="60" jobs="1":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ./fuzz/seed.sh
+    export PATH="$(dirname "$(rustup which --toolchain nightly cargo)"):$PATH"
+    cd fuzz
+    set --
+    case "{{target}}" in gpif_xml|pipeline) set -- "-dict=$PWD/gpif.dict" ;; esac
+    cargo fuzz run -O -a "{{target}}" -- "$@" -fork="{{jobs}}" -max_total_time="{{secs}}" \
+        -timeout=5 -rss_limit_mb=2048 -max_len=65536
+
 clean:
     cargo clean
     rm -rf build shell/.build {{generated_dir}} {{ffi_dir}}

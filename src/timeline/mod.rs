@@ -76,8 +76,13 @@ pub struct Timeline {
     occurrences: Vec<Vec<usize>>,
 }
 
+/// Valid tempos are clamped to this range, so score seconds stay finite and strictly increasing
+/// however absurd the file's tempo (e.g. GPIF's `1e-300`).
+const MIN_BPM: f64 = 1.0;
+const MAX_BPM: f64 = 10_000.0;
+
 fn secs_per_tick(bpm: f64) -> f64 {
-    60.0 / (bpm * f64::from(TICKS_PER_QUARTER))
+    60.0 / (bpm.clamp(MIN_BPM, MAX_BPM) * f64::from(TICKS_PER_QUARTER))
 }
 
 fn valid_bpm(bpm: f64) -> bool {
@@ -110,7 +115,8 @@ impl Timeline {
     ///
     /// Tempo changes take effect every time their bar is played; the tempo then carries over to
     /// whatever bar is played next (including after a repeat or jump). Invalid tempos (≤ 0,
-    /// non-finite) are ignored; an invalid initial tempo becomes 120.
+    /// non-finite) are ignored; an invalid initial tempo becomes 120. Valid tempos are clamped to
+    /// 1–10,000 bpm.
     pub fn new(score: &Score) -> Self {
         let n = score.master_bars.len();
         let order = unroll::unroll(&score.master_bars);

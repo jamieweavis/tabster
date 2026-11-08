@@ -8,8 +8,9 @@ use super::gpif::parse_gpif;
 use crate::model::Score;
 
 const SCORE_PATH: &str = "Content/score.gpif";
-/// Refuse to inflate a score larger than this (zip-bomb guard). Real scores are a few MB.
-const MAX_SCORE_BYTES: u64 = 256 * 1024 * 1024;
+/// Refuse to inflate a score larger than this (zip-bomb guard; the GPIF DOM costs a few times
+/// the document's size). Real scores are a few MB. Same limit as GPX.
+const MAX_SCORE_BYTES: u64 = 64 * 1024 * 1024;
 
 pub fn parse(bytes: &[u8]) -> Result<Score, ParseError> {
     parse_gpif(&extract_score(bytes)?)
@@ -32,7 +33,9 @@ pub fn extract_score(bytes: &[u8]) -> Result<Vec<u8>, ParseError> {
     let file = zip
         .by_name(&name)
         .map_err(|e| ParseError::Container(format!("can't open {name}: {e}")))?;
-    let mut xml = Vec::with_capacity(file.size().min(MAX_SCORE_BYTES) as usize);
+    // The entry's size is the file's claim: don't preallocate more than the input could hold.
+    let plausible = (bytes.len() as u64).saturating_mul(32);
+    let mut xml = Vec::with_capacity(file.size().min(MAX_SCORE_BYTES).min(plausible) as usize);
     file.take(MAX_SCORE_BYTES + 1)
         .read_to_end(&mut xml)
         .map_err(|e| ParseError::Container(format!("can't read {name}: {e}")))?;
