@@ -468,6 +468,14 @@ impl Library {
         Ok(writer.last_insert_rowid())
     }
 
+    pub fn rename_setlist(&self, id: i64, name: &str) -> Result<(), LibraryError> {
+        let changed = self.writer.lock().execute(
+            "UPDATE setlists SET name = ?1 WHERE id = ?2",
+            params![name.trim(), id],
+        )?;
+        found(changed)
+    }
+
     pub fn delete_setlist(&self, id: i64) -> Result<(), LibraryError> {
         let changed = self
             .writer

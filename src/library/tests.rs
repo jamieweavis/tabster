@@ -802,3 +802,19 @@ fn concurrent_imports() {
     assert_eq!(f.files_in("tabs").len(), 16);
     assert_eq!(f.files_in("cache").len(), 16);
 }
+
+#[test]
+fn rename_setlist_keeps_tabs() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = Library::open(dir.path()).unwrap();
+    let id = lib.create_setlist("Old").unwrap();
+    lib.rename_setlist(id, "  New  ").unwrap();
+    let lists = lib.setlists().unwrap();
+    assert_eq!(lists.len(), 1);
+    assert_eq!(lists[0].id, id);
+    assert_eq!(lists[0].name, "New");
+    assert!(matches!(
+        lib.rename_setlist(id + 99, "x"),
+        Err(LibraryError::NotFound)
+    ));
+}

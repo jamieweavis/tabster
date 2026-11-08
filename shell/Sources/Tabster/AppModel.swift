@@ -48,8 +48,7 @@ final class AppModel {
 
     // MARK: Settings
 
-    // TODO(integration): core.config()/core.setConfig — agent I adds these to the FFI. Until then
-    // the settings live only in memory.
+    /// Mirrors the core's config (`~/.config/tabster.toml`); change it through `updateConfig`.
     private(set) var config = Config(scale: 1.0, showRhythm: true, watchedFolders: [], followCursor: true)
 
     @ObservationIgnored private var query = ""
@@ -67,6 +66,7 @@ final class AppModel {
             startupError = error.userMessage
             return
         }
+        if let core { config = core.config() }
         core?.setLibraryObserver(observer: LibraryObserverBridge(model: self))
         reloadAll()
     }
@@ -224,17 +224,10 @@ final class AppModel {
         return id
     }
 
-    /// The core has no rename, so this makes a new setlist with the same tabs and deletes the old.
     func renameSetlist(_ setlist: Setlist, to name: String) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name != setlist.name else { return }
-        perform { core in
-            let tabs = try setlistTabs(core, setlist.id)
-            let id = try core.createSetlist(name: name)
-            try core.setSetlistTabs(id: id, tabs: tabs)
-            try core.deleteSetlist(id: setlist.id)
-            if sidebar == .setlist(setlist.id) { sidebar = .setlist(id) }
-        }
+        perform { core in try core.renameSetlist(id: setlist.id, name: name) }
     }
 
     func deleteSetlist(_ id: Int64) {
@@ -265,7 +258,7 @@ final class AppModel {
     // MARK: Settings
 
     func updateConfig(_ config: Config) {
-        // TODO(integration): try core.setConfig(config: config), reporting failure in the UI.
+        core?.setConfig(config: config)
         self.config = config
         Logger.settings.info("settings changed")
     }

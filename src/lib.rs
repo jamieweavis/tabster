@@ -218,6 +218,12 @@ impl Core {
         Ok(id)
     }
 
+    pub fn rename_setlist(&self, id: i64, name: String) -> Result<(), CoreError> {
+        self.shared.library.rename_setlist(id, &name)?;
+        self.changed();
+        Ok(())
+    }
+
     pub fn delete_setlist(&self, id: i64) -> Result<(), CoreError> {
         self.shared.library.delete_setlist(id)?;
         self.changed();
@@ -272,6 +278,8 @@ impl Core {
     /// Open a tab for viewing and playback.
     pub fn open_tab(&self, id: TabId) -> Result<Arc<TabSession>, CoreError> {
         let score = self.shared.library.load_score(id)?;
+        // Opening updates "last opened", which the Recently Opened list shows.
+        self.changed();
         Ok(Arc::new(TabSession::new(id, score)))
     }
 }
