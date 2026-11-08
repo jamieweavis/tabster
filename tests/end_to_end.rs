@@ -17,7 +17,8 @@ fn fixture(name: &str) -> String {
 
 fn run_pipeline(path: &str) {
     let dir = tempfile::tempdir().unwrap();
-    let core = Core::new(dir.path().to_string_lossy().into_owned()).unwrap();
+    // A private config, so the test never reads or watches the user's folders.
+    let core = Core::with_paths(dir.path(), &dir.path().join("tabster.toml")).unwrap();
 
     let outcomes = core.import_paths(vec![path.to_string()]);
     assert_eq!(outcomes.len(), 1);

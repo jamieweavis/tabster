@@ -154,7 +154,7 @@ fn debounce_loop(
 
 /// A visible file with a Guitar Pro extension (not `._foo.gp` resource forks or other dot
 /// files, which editors and downloads leave behind).
-fn is_tab_file(path: &Path) -> bool {
+pub(crate) fn is_tab_file(path: &Path) -> bool {
     let visible = path
         .file_name()
         .and_then(|n| n.to_str())
