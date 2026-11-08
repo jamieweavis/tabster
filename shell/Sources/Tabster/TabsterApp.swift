@@ -6,6 +6,12 @@ import os
 struct TabsterApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    init() {
+        #if DEBUG
+        YouTubeDebugHarness.runIfRequested()
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup("Tabster") {
             ViewerHarness.debugHarnessIfRequested { ContentView() }
