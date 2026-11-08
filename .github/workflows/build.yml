@@ -1,0 +1,61 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    # Package.swift targets macOS 26, which needs Xcode 26.
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install just
+        uses: extractions/setup-just@v3
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Cache SoundFont
+        uses: actions/cache@v4
+        with:
+          path: Resources/Bundle/SoundFont.sf2
+          key: soundfont-generaluser-gs-2.0.3
+
+      - name: Lint
+        run: just lint
+
+      - name: Test
+        run: just test
+
+      - name: Test Swift
+        run: just test-swift
+
+      # Builds the bindings, the Swift shell and the bundle; CI has no signing identity, so sign ad hoc.
+      - name: Build app
+        env:
+          TABSTER_SIGN_IDENTITY: "-"
+        run: just app
