@@ -55,7 +55,11 @@ final class TabViewerModel {
     private(set) var phase: Phase = .loading
     private(set) var info: TabInfo?
     private(set) var track: UInt32 = 0
-    private(set) var scale: Float = 1
+    /// Zoom, remembered for the app.
+    private(set) var scale: Float = {
+        let stored = UserDefaults.standard.object(forKey: TabViewerModel.scaleKey) as? Float ?? 1
+        return min(max(stored, TabViewerModel.scaleRange.lowerBound), TabViewerModel.scaleRange.upperBound)
+    }()
     private(set) var showRhythm: Bool = UserDefaults.standard.object(forKey: "viewer.showRhythm") as? Bool ?? true
     var isPlaying = false {
         didSet {
@@ -317,6 +321,8 @@ final class TabViewerModel {
         scheduleSave()
     }
 
+    static let scaleKey = "viewer.scale"
+
     func zoom(by delta: Float) { setScale(scale + delta) }
     func resetZoom() { setScale(1) }
 
@@ -324,6 +330,7 @@ final class TabViewerModel {
         let clamped = min(max((value * 10).rounded() / 10, Self.scaleRange.lowerBound), Self.scaleRange.upperBound)
         guard clamped != scale else { return }
         scale = clamped
+        UserDefaults.standard.set(clamped, forKey: Self.scaleKey)
         relayout(anchor: nil)
     }
 

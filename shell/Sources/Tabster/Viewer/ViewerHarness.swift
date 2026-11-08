@@ -86,6 +86,7 @@ private struct HarnessView: View {
         if let audio = env["TABSTER_TAB_AUDIO"] { volatile["tabAudio"] = audio == "1" }
         if let countIn = env["TABSTER_COUNTIN"] { volatile["viewer.countIn"] = countIn == "1" }
         if let trainer = env["TABSTER_TRAINER"] { volatile["viewer.trainer"] = trainer }
+        volatile[TabViewerModel.scaleKey] = env["TABSTER_SCALE"].flatMap(Float.init) ?? 1
         UserDefaults.standard.setVolatileDomain(volatile, forName: UserDefaults.argumentDomain)
         let practiced = env["TABSTER_PRACTICED"].flatMap(Double.init)
         let savedLoops: [(String, UInt32, UInt32)] = (env["TABSTER_SAVED_LOOPS"] ?? "").split(separator: ",").compactMap {
@@ -145,7 +146,6 @@ private struct HarnessView: View {
                     model.setPerBarSync(true)
                 }
             }
-            if let scale = env["TABSTER_SCALE"].flatMap(Float.init) { model.zoom(by: scale - 1) }
             self.model = model
             if env["TABSTER_SCROLLTEST"] == "1" { scheduleScrollTest() }
             if env["TABSTER_SELFTEST"] == "1" { scheduleSelfTest(model) }

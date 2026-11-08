@@ -51,10 +51,12 @@ struct TabViewer: View {
         }
         .frame(minWidth: 480, minHeight: 320)
         .background {
-            // ⌘+ (shifted =) and ⌘0 without visible buttons; T / ⇧T taps while syncing (as key
+            // Zoom (⌘= / ⌘+ / ⌘- / ⌘0) without visible buttons; T / ⇧T taps while syncing (as key
             // equivalents, so they work even when the YouTube player has focus).
             Group {
                 Button("Zoom In") { model.zoom(by: 0.1) }.keyboardShortcut("+", modifiers: .command)
+                Button("Zoom In") { model.zoom(by: 0.1) }.keyboardShortcut("=", modifiers: .command)
+                Button("Zoom Out") { model.zoom(by: -0.1) }.keyboardShortcut("-", modifiers: .command)
                 Button("Actual Size") { model.resetZoom() }.keyboardShortcut("0", modifiers: .command)
                 if model.syncEditing {
                     Button("Tap") { model.tapHere() }.keyboardShortcut("t", modifiers: [])
@@ -169,14 +171,6 @@ private struct ViewerToolbar: ToolbarContent {
                     .help(model.usingVideoClock ? "Metronome over the video" : "Metronome")
                 }
             }
-
-            ControlGroup {
-                Button("Zoom Out", systemImage: "minus.magnifyingglass") { model.zoom(by: -0.1) }
-                    .keyboardShortcut("-", modifiers: .command)
-                Button("Zoom In", systemImage: "plus.magnifyingglass") { model.zoom(by: 0.1) }
-                    .keyboardShortcut("=", modifiers: .command)
-            }
-            .help("Zoom (⌘+ / ⌘- / ⌘0)")
 
             Toggle(isOn: Binding(get: { model.showRhythm }, set: { model.setShowRhythm($0) })) {
                 Label("Rhythm", systemImage: "music.note")
