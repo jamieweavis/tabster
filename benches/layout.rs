@@ -2,11 +2,11 @@
 //! that collapse into multi-bar rests, and tied notes) must lay out in < 5 ms.
 
 use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use tabster_core::layout::{self, LayoutOptions};
 use tabster_core::model::{
     Bar, Beat, Duration, MasterBar, Note, NoteEffects, Score, Section, Track, Voice,
 };
-use std::hint::black_box;
 
 fn score(bars: usize) -> Score {
     let mut track = Track {
