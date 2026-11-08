@@ -8,7 +8,7 @@ struct TabsterApp: App {
 
     var body: some Scene {
         WindowGroup("Tabster") {
-            ContentView()
+            ViewerHarness.debugHarnessIfRequested { ContentView() }
                 .environment(appDelegate.model)
         }
         .defaultSize(width: 1280, height: 800)

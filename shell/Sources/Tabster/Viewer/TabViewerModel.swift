@@ -107,12 +107,7 @@ final class TabViewerModel {
                 let openTabMs = (CACurrentMediaTime() - start) * 1000
                 let info = session.info()
                 let state = try? core.practiceState(tab: id)
-                let bars = (0..<info.playedBarCount).map { i in
-                    let start = session.scoreSecsForPlayedBar(playedBar: i)
-                    // Nudge past the boundary so float rounding can't land in the previous bar.
-                    let master = session.positionAtScore(scoreSecs: start + 1e-6)?.masterBar ?? 0
-                    return PlayedBar(startSecs: start, masterBar: master)
-                }
+                let bars = session.playedBars().map { PlayedBar(startSecs: $0.startSecs, masterBar: $0.masterBar) }
                 var list: DisplayList?
                 if width > 0 {
                     let track = state.map(\.track).flatMap { t in info.tracks.contains { $0.index == t } ? t : nil } ?? 0

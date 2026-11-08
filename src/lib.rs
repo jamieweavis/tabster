@@ -468,6 +468,15 @@ pub struct TabInfo {
     pub sections: Vec<SectionInfo>,
 }
 
+/// One bar as played (repeats and jumps unrolled).
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
+pub struct PlayedBarInfo {
+    pub master_bar: u32,
+    pub occurrence: u32,
+    pub start_secs: f64,
+    pub end_secs: f64,
+}
+
 /// Where playback is, for drawing the cursor.
 #[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
 pub struct PlaybackPosition {
@@ -608,6 +617,20 @@ impl TabSession {
     pub fn position_at_video(&self, video_secs: f64) -> Option<PlaybackPosition> {
         let score_secs = self.video_to_score(video_secs);
         self.position_at_score(score_secs)
+    }
+
+    /// Every played bar in order, with its score-time span.
+    pub fn played_bars(&self) -> Vec<PlayedBarInfo> {
+        self.timeline
+            .played_bars()
+            .iter()
+            .map(|b| PlayedBarInfo {
+                master_bar: b.master_bar,
+                occurrence: b.occurrence,
+                start_secs: b.start_secs,
+                end_secs: b.end_secs,
+            })
+            .collect()
     }
 
     /// Score seconds at the first time `master_bar` is played (0 if it's never played).

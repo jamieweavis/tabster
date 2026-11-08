@@ -8,7 +8,7 @@ import SwiftUI
 /// `TABSTER_LOOP=<first>-<last>` (1-based bars),
 /// `TABSTER_APPEARANCE=dark|light`, `TABSTER_SCALE=<zoom>`, `TABSTER_WINDOW=<w>x<h>`, `TABSTER_SELFTEST=1` (exercise the transport and log),
 /// `TABSTER_SCROLLTEST=1` (scroll
-/// through the whole tab and log draw times), and `TABSTER_SNAPSHOT=<png>` (write the window to
+/// through the whole tab and log draw times), and `TABSTER_VIEW_SNAPSHOT=<png>` (write the window to
 /// a PNG after ~2 s, log perf stats and quit).
 ///
 /// Hook (in `TabsterApp`): `ViewerHarness.debugHarnessIfRequested { ContentView() }`.
@@ -99,7 +99,7 @@ private struct HarnessView: View {
             self.model = model
             if env["TABSTER_SCROLLTEST"] == "1" { scheduleScrollTest() }
             if env["TABSTER_SELFTEST"] == "1" { scheduleSelfTest(model) }
-            if let snapshot = env["TABSTER_SNAPSHOT"] { scheduleSnapshot(to: snapshot) }
+            if let snapshot = env["TABSTER_VIEW_SNAPSHOT"] { scheduleSnapshot(to: snapshot) }
             // Measure steady-state playback, not the open/first-layout frames.
             Task {
                 try? await Task.sleep(for: .seconds(1))
