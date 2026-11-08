@@ -35,13 +35,27 @@ So that model becomes ours:
 ### YouTube embedding
 Use `WKWebView` with the IFrame Player API.
 - **Gotcha: error 153.** WKWebView sends no Referer. Load the player with `loadHTMLString(html, baseURL: https://<stable origin>)` and pass a matching `origin=` param plus `referrerpolicy="strict-origin-when-cross-origin"`.
-- **Fallback for 153:** serve the player page from a tiny local HTTP server on `http://127.0.0.1:<port>`, run by the Rust core with `tiny_http`. Set this up in Phase 3.
+- **Fallback for 153:** serve the player page from a tiny local HTTP server, run by the Rust core with `tiny_http`. It binds to loopback, but the page must be loaded as `http://localhost:<port>/player.html`.
+- **Spike results** (`spikes/youtube/`; 23 real launches; raw data in `spikes/youtube/results/`):
+  - **Primary works:** `loadHTMLString(html, baseURL: https://tabster.local/)`. The base URLs `https://www.youtube-nocookie.com/` and `http://localhost/` also work.
+  - **`localhost` fallback works.**
+  - **No base URL, or a `file://` page:** error 153.
+  - **An IP-literal origin** (`127.0.0.1`), either as base URL or as server host: error **150**.
+  - **Safari user agent:** makes no difference.
+  - **The user's test video `cJRFMfztgBg`:** embeds in both working modes (duration 216 s).
+  - **Embedding disabled, or a bogus id:** error 150 (`ready` fires first, with duration 0).
+  - **Before calling `tabster.*`:** wait for the page's `apiReady` message.
 - **Errors 101 and 150 (embedding disabled):** show "open in browser" and keep the tab playing on its own clock.
 
 ### Smooth cursor
-- Poll `getCurrentTime()` every 100–150 ms.
+- Measured in the spike:
+  - `getCurrentTime()` is already interpolated and is smooth to about ±1.6 ms.
+  - JS→Swift messages take 0.1–0.6 ms (p50).
+  - Seeks take about 0.5 s to resume.
+  - **Hazard:** for 0.5–0.8 s after a rate change, the reported time runs ahead and then jumps back by 120–300 ms. The `rate` event, not `setRate`'s return value, is the reliable signal.
+- The page pushes `{t, perf}` samples every 100 ms.
 - Between polls, extrapolate on a display link: `t = sample + (now − sampleWallClock) × rate`.
-- Re-anchor on seek, pause and rate change.
+- Re-anchor on seek, pause and rate change. For 1 s after a seek, play or rate change, correct on every sample. Freeze while buffering. In replay, steady-state error stayed under 2 ms.
 - Ignore drift smaller than 40 ms so the cursor doesn't jitter.
 
 ### Synth (optional)
@@ -191,7 +205,7 @@ Before fanning out, freeze the UniFFI surface from Phase 1. All Swift agents wor
 
 | Agent | Scope |
 |---|---|
-| **J: YouTube player component (Swift and web)** | `Resources/youtube-player.html` uses the IFrame API, with a JS↔Swift bridge through `WKScriptMessageHandler`. Commands: `load(id)`, `play`, `pause`, `seek(t)`, `setRate(r)`. Events: `state`, `time`, `error`, `rates`. Handle error 153 with `baseURL` and origin, falling back to the Rust `player_server` on `127.0.0.1`. Handle 101 and 150 with a fallback UI. Resizable split or picture-in-picture layout |
+| **J: YouTube player component (Swift and web)** | `Resources/youtube-player.html` uses the IFrame API, with a JS↔Swift bridge through `WKScriptMessageHandler`. Commands: `load(id)`, `play`, `pause`, `seek(t)`, `setRate(r)`. Events: `state`, `time`, `error`, `rates`. Handle error 153 with `baseURL` and origin, falling back to the Rust `player_server` at `http://localhost:<port>` (an IP-literal origin gets error 150). Reference implementation: `spikes/youtube/Sources/YouTubeSpike/PlayerController.swift`. Handle 101 and 150 with a fallback UI. Resizable split or picture-in-picture layout |
 | **K: Transport clock (Rust and Swift)** | `playback/`: one `Transport` is the source of truth, driven either by video time samples or by an internal clock when there is no video. It does display-link extrapolation with drift correction, applies the loop range to video seeks, and speed changes call `setPlaybackRate` (snapped to the rates YouTube supports). It exposes `tick(now) -> CursorPos` for the renderer |
 
 **Integration and sync-editing UX (lead, or one agent after J and K land):**
@@ -274,7 +288,7 @@ Phase 5  O packaging │ P perf/fuzz                                    (2 paral
 - Idle CPU close to 0%. The display link runs only while playing.
 
 ## 6. Risks
-- **YouTube embedding in WKWebView (error 153):** prototype this first, in Phase 0 as a throwaway spike, using both the `baseURL` approach and the localhost server.
+- **YouTube embedding in WKWebView (error 153):** *resolved by the spike.* The `baseURL` mode works, with `localhost` as the fallback (see §0).
 - **GPIF breadth:** it has many effects. Ship the core set and log unknown nodes rather than failing.
 - **GPX decompression:** the BCFZ bit-reader is fiddly. Port it carefully from alphaTab's `GpxFileSystem`.
 - **Rendering quality:** good tab engraving is a deep problem. Aim for "clear and readable", not Guitar Pro-grade engraving, in v1.
