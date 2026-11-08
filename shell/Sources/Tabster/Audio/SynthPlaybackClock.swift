@@ -48,12 +48,12 @@ final class SynthPlaybackClock: PlaybackClock {
         }
     }
 
-    var currentTime: Double {
+    func time(at hostTime: CFTimeInterval) -> Double {
         guard isPlaying, let anchor = audio.state.anchor.withLock({ $0 }) else {
             return synth.positionSecs()
         }
         if anchor.countingIn { return anchor.scoreStart }
-        let elapsed = max(0, CACurrentMediaTime() - anchor.heardAt)
+        let elapsed = max(0, hostTime - anchor.heardAt)
         let rate = audio.state.rate.withLock { $0 }
         // Extrapolate at most one more buffer past what's been rendered, so a late callback
         // doesn't make the cursor run ahead of the audio.
@@ -79,7 +79,7 @@ final class SynthPlaybackClock: PlaybackClock {
     func pause() {
         guard isPlaying else { return }
         // Freeze where the listener is, not where the renderer got to.
-        let heard = currentTime
+        let heard = time(at: CACurrentMediaTime())
         isPlaying = false
         synth.setPlaying(playing: false)
         synth.seek(scoreSecs: heard)
