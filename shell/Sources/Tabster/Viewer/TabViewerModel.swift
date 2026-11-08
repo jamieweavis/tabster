@@ -93,6 +93,19 @@ final class TabViewerModel {
         didSet { pushState() }
     }
     @ObservationIgnored var clock: PlaybackClock = InternalClock()
+    /// The tab synth, once its SoundFont has loaded (nil if the app has none).
+    @ObservationIgnored var synthClock: SynthPlaybackClock?
+    var synthAvailable = false
+    /// Hear the tab through the synth when no video is the clock. Remembered across tabs.
+    var tabAudio = UserDefaults.standard.object(forKey: "tabAudio") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(tabAudio, forKey: "tabAudio")
+            if !usingVideoClock { adoptInternalClock() }
+        }
+    }
+    var metronome = false {
+        didSet { synthClock?.synth.setMetronome(enabled: metronome) }
+    }
     @ObservationIgnored private(set) var playedBars: [PlayedBar] = []
     @ObservationIgnored var position: PlaybackPosition?
     /// Video time of every played bar's start under the current sync (for taps and the ruler).
@@ -164,6 +177,7 @@ final class TabViewerModel {
             if let state = opened.state { restore(state, info: opened.info) }
             phase = .ready
             videosLoaded(opened.videos)
+            loadSynth(opened.session)
             ViewerMetrics.openMs = (CACurrentMediaTime() - openedAt) * 1000
             ViewerMetrics.openWork = (opened.openTabMs, opened.workMs)
             ViewerLog.log.info("Opened tab \(id) in \((CACurrentMediaTime() - self.openedAt) * 1000, format: .fixed(precision: 1)) ms")
@@ -465,6 +479,19 @@ final class TabViewerModel {
         let endIndex = playedBars[first...].firstIndex { $0.masterBar == loop.upperBound } ?? first
         let end = endIndex + 1 < playedBars.count ? playedBars[endIndex + 1].startSecs : duration
         loopSpan = playedBars[first].startSecs..<end
+        synthClock?.synth.setLoop(startSecs: loopSpan?.lowerBound, endSecs: loopSpan?.upperBound)
+    }
+
+    /// Load the synth in the background; adopt it as the clock if nothing else is driving.
+    private func loadSynth(_ session: TabSession) {
+        Task { [weak self] in
+            guard let clock = await SynthPlaybackClock.make(session: session), let self else { return }
+            clock.synth.setMetronome(enabled: self.metronome)
+            clock.synth.setLoop(startSecs: self.loopSpan?.lowerBound, endSecs: self.loopSpan?.upperBound)
+            self.synthClock = clock
+            self.synthAvailable = true
+            if !self.usingVideoClock && self.tabAudio { self.adoptInternalClock() }
+        }
     }
 
     // MARK: - Practice state

@@ -153,6 +153,20 @@ private struct ViewerToolbar: ToolbarContent {
             .padding(.horizontal, 6)
             .help(model.usingVideoClock ? "Playback speed (YouTube's rates)" : "Playback speed")
 
+            if model.synthAvailable {
+                ControlGroup {
+                    Toggle(isOn: Binding(get: { model.tabAudio }, set: { model.tabAudio = $0 })) {
+                        Label("Tab Audio", systemImage: model.tabAudio ? "speaker.wave.2" : "speaker.slash")
+                    }
+                    .help(model.usingVideoClock ? "Tab audio plays when there's no video" : "Hear the tab")
+                    Toggle(isOn: Binding(get: { model.metronome }, set: { model.metronome = $0 })) {
+                        Label("Metronome", systemImage: "metronome")
+                    }
+                    .help("Metronome")
+                    .disabled(!model.tabAudio || model.usingVideoClock)
+                }
+            }
+
             ControlGroup {
                 Button("Zoom Out", systemImage: "minus.magnifyingglass") { model.zoom(by: -0.1) }
                     .keyboardShortcut("-", modifiers: .command)

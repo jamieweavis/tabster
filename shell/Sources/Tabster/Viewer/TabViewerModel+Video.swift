@@ -155,13 +155,19 @@ extension TabViewerModel {
         ViewerLog.log.info("Video clock: \(video.youtubeId, privacy: .public) from \(start, format: .fixed(precision: 2)) s")
     }
 
-    /// Hand playback to the internal clock without moving the cursor (and keep playing if it was).
-    private func adoptInternalClock() {
+    /// Hand playback to the tab's own clock (the synth when tab audio is on, otherwise a silent
+    /// internal clock) without moving the cursor, and keep playing if it was.
+    func adoptInternalClock() {
         let score = clampedScore(currentTime)
         let wasPlaying = isPlaying
         clock.pause()
         usingVideoClock = false
-        let internalClock = InternalClock()
+        let internalClock: PlaybackClock
+        if tabAudio, let synthClock {
+            internalClock = synthClock
+        } else {
+            internalClock = InternalClock()
+        }
         speed = Self.snap(speed, to: Self.speeds)
         internalClock.rate = speed
         internalClock.seek(to: score)
