@@ -12,3 +12,6 @@
 /*.gpx
 /*.gp[345]
 /testdata/local/
+# Downloaded by `just soundfont` (too big to track)
+/Resources/Bundle/SoundFont.sf2
+/Resources/Bundle/SoundFont.sf2.part

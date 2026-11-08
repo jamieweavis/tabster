@@ -10,6 +10,7 @@ pub mod layout;
 pub mod library;
 pub mod logging;
 pub mod model;
+pub mod playback;
 pub mod player_server;
 pub mod sync;
 pub mod timeline;
@@ -28,6 +29,7 @@ use crate::library::{
     TabSummary, Video, VideoId,
 };
 use crate::model::Score;
+use crate::playback::{SynthError, TabSynth};
 use crate::player_server::PlayerServer;
 use crate::sync::{SyncMap, SyncPoint, SyncSpec};
 use crate::timeline::Timeline;
@@ -646,6 +648,18 @@ impl TabSession {
         bars.get(played_bar as usize)
             .or(bars.last())
             .map_or(0.0, |b| b.start_secs)
+    }
+
+    /// A synthesizer for hearing this tab, using the SoundFont at `soundfont_path`. Fails with
+    /// `NotFound` if there's no SoundFont there (tab audio is then unavailable). Blocking
+    /// (the first call loads the SoundFont): call from a background task.
+    pub fn synth(&self, soundfont_path: String) -> Result<Arc<TabSynth>, CoreError> {
+        TabSynth::new(&self.score, &self.timeline, Path::new(&soundfont_path))
+            .map(Arc::new)
+            .map_err(|e| match e {
+                SynthError::NotFound(_) => CoreError::NotFound,
+                e => CoreError::Library(e.to_string()),
+            })
     }
 
     /// Score seconds for a click in layout coordinates. Picks the occurrence of the clicked bar
