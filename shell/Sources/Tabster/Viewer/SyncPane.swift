@@ -1,33 +1,15 @@
 import SwiftUI
 
-/// The video beside or above the tab: the YouTube player and, while syncing, the sync bar and
-/// the bar ruler.
-struct VideoPane: View {
+/// The sync editor above the tab while syncing: the sync bar and the bar ruler. (The video
+/// itself is never shown; it plays hidden behind the tab.)
+struct SyncPane: View {
     let model: TabViewerModel
-    /// Beside the tab (a column): the player keeps its 16:9 height and the rest stacks under it.
-    /// Above the tab, the player shrinks to whatever height the split leaves.
-    var beside = false
 
     var body: some View {
-        VStack(spacing: 10) {
-            if let player = model.player {
-                if beside {
-                    YouTubePlayerView(controller: player)
-                        .frame(maxWidth: .infinity)
-                } else {
-                    YouTubePlayerView(controller: player)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .layoutPriority(-1)
-                }
-            }
-            if model.syncEditing {
-                SyncPanel(model: model)
-            }
-            if beside || model.player == nil { Spacer(minLength: 0) }
-        }
-        .padding(10)
-        .frame(minWidth: 240, minHeight: model.syncEditing ? 220 : 120)
-        .background(Color(nsColor: .windowBackgroundColor))
+        SyncPanel(model: model)
+            .padding(10)
+            .frame(maxWidth: .infinity)
+            .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 

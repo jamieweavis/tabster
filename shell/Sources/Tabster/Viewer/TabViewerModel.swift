@@ -70,8 +70,6 @@ final class TabViewerModel {
     /// Inclusive master-bar loop range.
     private(set) var loop: ClosedRange<UInt32>?
     private(set) var hasLayout = false
-    /// The video pane is on screen (the view owns the preference; see `setVideoVisible`).
-    var showVideo = false
 
     // Video and sync (see TabViewerModel+Video.swift).
     /// The tab's attached YouTube videos.

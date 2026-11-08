@@ -7,8 +7,6 @@ struct TabViewer: View {
     let core: Core
     let tabID: Int64
     @State private var model: TabViewerModel
-    /// Where the video sits: "top" or "right" (remembered for the app).
-    @AppStorage("viewer.videoPlacement") private var videoPlacement = "top"
     @State private var loopPrompt: LoopPrompt?
 
     init(core: Core, tabID: Int64) {
@@ -30,34 +28,22 @@ struct TabViewer: View {
                 ContentUnavailableView("Couldn't Open Tab", systemImage: "exclamationmark.triangle",
                                        description: Text(message))
             } else {
-                if model.showVideo, model.selectedVideo != nil {
-                    if videoPlacement == "right" {
-                        HSplitView {
-                            canvas.frame(minWidth: 320)
-                            VideoPane(model: model, beside: true)
-                                .frame(minWidth: 280, idealWidth: 440, maxWidth: 900)
-                        }
-                    } else {
-                        VSplitView {
-                            VideoPane(model: model)
-                                .frame(minHeight: 140, idealHeight: model.syncEditing ? 440 : 320, maxHeight: 760)
-                            canvas.frame(minHeight: 160)
+                if model.syncEditing, model.selectedVideo != nil {
+                    SyncPane(model: model)
+                    Divider()
+                }
+                canvas
+                    .background {
+                        // The video is never shown, only heard: its web view stays in the
+                        // window, full size but invisible, behind the tab, as clock and audio.
+                        if model.selectedVideo != nil, let player = model.player {
+                            YouTubePlayerView(controller: player)
+                                .frame(width: 356, height: 200)
+                                .opacity(0)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
                         }
                     }
-                } else {
-                    canvas
-                        .background {
-                            // The hidden video keeps playing (the music source): its web view
-                            // stays in the window, full size but invisible, behind the tab.
-                            if model.selectedVideo != nil, let player = model.player {
-                                YouTubePlayerView(controller: player)
-                                    .frame(width: 356, height: 200)
-                                    .opacity(0)
-                                    .allowsHitTesting(false)
-                                    .accessibilityHidden(true)
-                            }
-                        }
-                }
                 Divider()
                 TransportBar(model: model)
                     .disabled(model.info == nil)
@@ -82,7 +68,7 @@ struct TabViewer: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .navigationTitle(model.info?.title ?? "")
         .navigationSubtitle(model.info?.artist ?? "")
-        .toolbar { ViewerToolbar(model: model, videoPlacement: $videoPlacement, loopPrompt: $loopPrompt) }
+        .toolbar { ViewerToolbar(model: model, loopPrompt: $loopPrompt) }
         .modifier(LoopPromptModifier(model: model, prompt: $loopPrompt))
         .sheet(isPresented: Binding(get: { model.showAttachSheet }, set: { model.showAttachSheet = $0 })) {
             VideoAttachSheet(onAttach: { id, label in model.addVideo(youtubeID: id, label: label) })
@@ -114,7 +100,6 @@ struct TabViewer: View {
 
 private struct ViewerToolbar: ToolbarContent {
     let model: TabViewerModel
-    @Binding var videoPlacement: String
     @Binding var loopPrompt: LoopPrompt?
 
     var body: some ToolbarContent {
@@ -198,7 +183,7 @@ private struct ViewerToolbar: ToolbarContent {
             }
             .help("Show rhythm")
 
-            if model.showVideo, model.selectedVideo != nil {
+            if model.selectedVideo != nil {
                 Toggle(isOn: Binding(get: { model.syncEditing }, set: { model.syncEditing = $0 })) {
                     Label("Sync", systemImage: "metronome")
                 }
@@ -210,30 +195,18 @@ private struct ViewerToolbar: ToolbarContent {
                     .help("Add YouTube video…")
             } else {
                 Menu {
-                    Toggle("Show Video", isOn: Binding(get: { model.showVideo }, set: { model.setVideoVisible($0) }))
-                    Picker("Position", selection: $videoPlacement) {
-                        Text("Video Above Tab").tag("top")
-                        Text("Video Beside Tab").tag("right")
-                    }
-                    .pickerStyle(.inline)
-                    Divider()
                     VideoPicker(
                         videos: model.videos,
                         selectedID: model.selectedVideoID,
-                        onSelect: { video in
-                            model.setVideoVisible(true)
-                            model.select(video)
-                        },
+                        onSelect: { model.select($0) },
                         onRemove: { model.removeVideo($0) },
                         onSetDefault: { model.makeDefault($0) },
                         onAdd: { model.showAttachSheet = true }
                     )
                 } label: {
-                    Label("Video", systemImage: model.showVideo ? "play.rectangle.fill" : "play.rectangle")
-                } primaryAction: {
-                    model.setVideoVisible(!model.showVideo)
+                    Label("Video", systemImage: "play.rectangle")
                 }
-                .help("Show or hide the video — hidden, its audio keeps playing (click); choose a video (hold)")
+                .help("Choose the video whose audio plays with the tab")
             }
         }
     }

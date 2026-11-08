@@ -6,12 +6,10 @@ import TabsterKit
 /// editor's actions.
 ///
 /// While a video is selected and healthy, YouTube is the clock (`VideoPlaybackClock`, in video
-/// seconds) and every score ↔ media conversion goes through the session's sync map — whether or
-/// not its pane is shown (hidden, it still plays: the music without the picture). With no video
+/// seconds) and every score ↔ media conversion goes through the session's sync map. The video is
+/// never shown — it plays hidden behind the tab, the music without the picture. With no video
 /// or a player failure, the `InternalClock` (score seconds) takes over at the same score position.
 extension TabViewerModel {
-    static let showVideoKey = "viewer.showVideo"
-
     var selectedVideo: Video? { videos.first { $0.id == selectedVideoID } }
 
     // MARK: - Videos
@@ -19,19 +17,9 @@ extension TabViewerModel {
     /// The session opened: show the default video (the default is how a choice persists).
     func videosLoaded(_ list: [Video]) {
         videos = list
-        showVideo = UserDefaults.standard.object(forKey: Self.showVideoKey) as? Bool ?? true
         if let video = list.first(where: \.isDefault) ?? list.first {
             select(video)
         }
-    }
-
-    /// Show or hide the video pane (remembered for the app). A hidden video keeps playing as the
-    /// clock and audio source; only the picture goes.
-    func setVideoVisible(_ visible: Bool) {
-        UserDefaults.standard.set(visible, forKey: Self.showVideoKey)
-        guard visible != showVideo else { return }
-        showVideo = visible
-        if !visible { syncEditing = false }
     }
 
     func select(_ video: Video) {
@@ -60,7 +48,6 @@ extension TabViewerModel {
             reloadVideos()
             if let video = videos.first(where: { $0.id == id }) {
                 if videos.count == 1 { try? core.setDefaultVideo(id: id) }
-                setVideoVisible(true)
                 select(video)
             }
         } catch {
@@ -87,7 +74,7 @@ extension TabViewerModel {
         }
     }
 
-    /// Make `video` the tab's default (what opens next time) and show it.
+    /// Make `video` the tab's default (what opens next time) and select it.
     func makeDefault(_ video: Video) {
         do {
             try core.setDefaultVideo(id: video.id)
