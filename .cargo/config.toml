@@ -1,0 +1,4 @@
+# C code compiled by build scripts (bundled SQLite) must target the app's minimum macOS,
+# not the build machine's, or the Swift link warns about newer object files.
+[env]
+MACOSX_DEPLOYMENT_TARGET = "26.0"

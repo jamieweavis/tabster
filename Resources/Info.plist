@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Tabster</string>
+    <key>CFBundleDisplayName</key>
+    <string>Tabster</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.jamieweavis.tabster</string>
+    <key>CFBundleExecutable</key>
+    <string>Tabster</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <!-- Both versions are stamped from Cargo.toml by `just app`. -->
+    <key>CFBundleShortVersionString</key>
+    <string>0.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>0.0.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>26.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.music</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Guitar Pro Tab</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>gp</string>
+                <string>gpx</string>
+                <string>gp5</string>
+                <string>gp4</string>
+                <string>gp3</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>
