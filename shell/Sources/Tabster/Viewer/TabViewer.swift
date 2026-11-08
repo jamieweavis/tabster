@@ -7,6 +7,8 @@ struct TabViewer: View {
     let core: Core
     let tabID: Int64
     @State private var model: TabViewerModel
+    /// Where the video sits: "top" or "right" (remembered for the app).
+    @AppStorage("viewer.videoPlacement") private var videoPlacement = "top"
 
     init(core: Core, tabID: Int64) {
         self.core = core
@@ -27,16 +29,23 @@ struct TabViewer: View {
                 ContentUnavailableView("Couldn't Open Tab", systemImage: "exclamationmark.triangle",
                                        description: Text(message))
             } else {
-                if model.showVideo {
-                    VideoPane()
-                    Divider()
-                }
-                // The canvas exists while loading too, so its width is known by the time the
-                // session opens and the first layout can start immediately.
-                TabCanvasView(model: model)
-                    .overlay {
-                        if !model.hasLayout { ProgressView() }
+                if model.showVideo, model.selectedVideo != nil {
+                    if videoPlacement == "right" {
+                        HSplitView {
+                            canvas.frame(minWidth: 320)
+                            VideoPane(model: model, beside: true)
+                                .frame(minWidth: 280, idealWidth: 440, maxWidth: 900)
+                        }
+                    } else {
+                        VSplitView {
+                            VideoPane(model: model)
+                                .frame(minHeight: 140, idealHeight: model.syncEditing ? 440 : 320, maxHeight: 760)
+                            canvas.frame(minHeight: 160)
+                        }
                     }
+                } else {
+                    canvas
+                }
                 Divider()
                 TransportBar(model: model)
                     .disabled(model.info == nil)
@@ -44,10 +53,15 @@ struct TabViewer: View {
         }
         .frame(minWidth: 480, minHeight: 320)
         .background {
-            // ⌘+ (shifted =) and ⌘0 without visible buttons.
+            // ⌘+ (shifted =) and ⌘0 without visible buttons; T / ⇧T taps while syncing (as key
+            // equivalents, so they work even when the YouTube player has focus).
             Group {
                 Button("Zoom In") { model.zoom(by: 0.1) }.keyboardShortcut("+", modifiers: .command)
                 Button("Actual Size") { model.resetZoom() }.keyboardShortcut("0", modifiers: .command)
+                if model.syncEditing {
+                    Button("Tap") { model.tapHere() }.keyboardShortcut("t", modifiers: [])
+                    Button("Tap Bar 1") { model.tapBarOne() }.keyboardShortcut("t", modifiers: .shift)
+                }
             }
             .opacity(0)
             .frame(width: 0, height: 0)
@@ -56,12 +70,30 @@ struct TabViewer: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .navigationTitle(model.info?.title ?? "")
         .navigationSubtitle(model.info?.artist ?? "")
-        .toolbar { ViewerToolbar(model: model) }
+        .toolbar { ViewerToolbar(model: model, videoPlacement: $videoPlacement) }
+        .sheet(isPresented: Binding(get: { model.showAttachSheet }, set: { model.showAttachSheet = $0 })) {
+            VideoAttachSheet(onAttach: { id, label in model.addVideo(youtubeID: id, label: label) })
+        }
+        .sheet(isPresented: Binding(get: { model.showPointsSheet }, set: { model.showPointsSheet = $0 })) {
+            BarPointsSheet(videoID: model.selectedVideo?.youtubeId,
+                                 playedBarCount: Int(model.info?.playedBarCount ?? 0)) { points in
+                model.importBarPoints(points)
+            }
+        }
         .task { await model.open() }
         .onDisappear { model.close() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             model.close(synchronously: true)
         }
+    }
+
+    /// The canvas exists while loading too, so its width is known by the time the session opens
+    /// and the first layout can start immediately.
+    private var canvas: some View {
+        TabCanvasView(model: model)
+            .overlay {
+                if !model.hasLayout { ProgressView() }
+            }
     }
 }
 
@@ -69,6 +101,7 @@ struct TabViewer: View {
 
 private struct ViewerToolbar: ToolbarContent {
     let model: TabViewerModel
+    @Binding var videoPlacement: String
 
     var body: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
@@ -106,7 +139,7 @@ private struct ViewerToolbar: ToolbarContent {
             HStack {
                 Menu {
                     Picker("Speed", selection: Binding(get: { model.speed }, set: { model.setSpeed($0) })) {
-                        ForEach(TabViewerModel.speeds, id: \.self) { speed in
+                        ForEach(model.speedOptions, id: \.self) { speed in
                             Text(TabViewer.percent(speed)).tag(speed)
                         }
                     }
@@ -118,7 +151,7 @@ private struct ViewerToolbar: ToolbarContent {
                 .fixedSize()
             }
             .padding(.horizontal, 6)
-            .help("Playback speed")
+            .help(model.usingVideoClock ? "Playback speed (YouTube's rates)" : "Playback speed")
 
             ControlGroup {
                 Button("Zoom Out", systemImage: "minus.magnifyingglass") { model.zoom(by: -0.1) }
@@ -133,10 +166,43 @@ private struct ViewerToolbar: ToolbarContent {
             }
             .help("Show rhythm")
 
-            Toggle(isOn: Binding(get: { model.showVideo }, set: { model.showVideo = $0 })) {
-                Label("Video", systemImage: "play.rectangle")
+            if model.showVideo, model.selectedVideo != nil {
+                Toggle(isOn: Binding(get: { model.syncEditing }, set: { model.syncEditing = $0 })) {
+                    Label("Sync", systemImage: "metronome")
+                }
+                .help("Sync the tab to the video")
             }
-            .help("Show video")
+
+            if model.videos.isEmpty {
+                Button("Add YouTube Video…", systemImage: "play.rectangle") { model.showAttachSheet = true }
+                    .help("Add YouTube video…")
+            } else {
+                Menu {
+                    Toggle("Show Video", isOn: Binding(get: { model.showVideo }, set: { model.setVideoVisible($0) }))
+                    Picker("Position", selection: $videoPlacement) {
+                        Text("Video Above Tab").tag("top")
+                        Text("Video Beside Tab").tag("right")
+                    }
+                    .pickerStyle(.inline)
+                    Divider()
+                    VideoPicker(
+                        videos: model.videos,
+                        selectedID: model.selectedVideoID,
+                        onSelect: { video in
+                            model.setVideoVisible(true)
+                            model.select(video)
+                        },
+                        onRemove: { model.removeVideo($0) },
+                        onSetDefault: { model.makeDefault($0) },
+                        onAdd: { model.showAttachSheet = true }
+                    )
+                } label: {
+                    Label("Video", systemImage: model.showVideo ? "play.rectangle.fill" : "play.rectangle")
+                } primaryAction: {
+                    model.setVideoVisible(!model.showVideo)
+                }
+                .help("Show or hide the video (click), choose a video (hold)")
+            }
         }
     }
 }

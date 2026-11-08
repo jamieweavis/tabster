@@ -1,17 +1,25 @@
 import QuartzCore
+import TabsterKit
 
-/// The time source that drives the tab cursor, in score seconds. Phase 2 uses `InternalClock`;
-/// Phase 3 adds a YouTube-backed clock (video time mapped through the session's sync map).
+/// The time source that drives the tab cursor, in the clock's own *media* seconds: score seconds
+/// for `InternalClock`, video seconds for `VideoPlaybackClock`. `TabViewerModel` converts media
+/// time to score time (through the session's sync map when the clock is a video).
 @MainActor
 protocol PlaybackClock: AnyObject {
-    /// Current position in score seconds. Cheap: called every frame while playing.
-    var currentTime: Double { get }
+    /// Position at host time `hostTime` (`CACurrentMediaTime()` axis). Cheap: called every
+    /// display frame with the frame's target timestamp.
+    func time(at hostTime: CFTimeInterval) -> Double
     var isPlaying: Bool { get }
-    /// Playback speed multiplier (1 = normal).
+    /// Playback speed multiplier (1 = normal). For a video clock, the rate the player confirmed.
     var rate: Double { get set }
     func play()
     func pause()
     func seek(to time: Double)
+}
+
+extension PlaybackClock {
+    /// Position now.
+    var currentTime: Double { time(at: CACurrentMediaTime()) }
 }
 
 /// A free-running clock on `CACurrentMediaTime`: position = anchor + (now − anchorWallClock) × rate.
@@ -25,35 +33,81 @@ final class InternalClock: PlaybackClock {
     var rate: Double = 1 {
         didSet {
             guard rate != oldValue else { return }
-            reanchor(at: time(withRate: oldValue))
+            let now = CACurrentMediaTime()
+            reanchor(at: time(at: now, rate: oldValue), wall: now)
         }
     }
 
-    var currentTime: Double { time(withRate: rate) }
+    func time(at hostTime: CFTimeInterval) -> Double { time(at: hostTime, rate: rate) }
 
     func play() {
         guard !isPlaying else { return }
-        reanchor(at: anchorTime)
+        reanchor(at: anchorTime, wall: CACurrentMediaTime())
         isPlaying = true
     }
 
     func pause() {
         guard isPlaying else { return }
-        reanchor(at: currentTime)
+        reanchor(at: currentTime, wall: CACurrentMediaTime())
         isPlaying = false
     }
 
     func seek(to time: Double) {
-        reanchor(at: max(0, time))
+        reanchor(at: time, wall: CACurrentMediaTime())
     }
 
-    private func time(withRate rate: Double) -> Double {
+    private func time(at hostTime: CFTimeInterval, rate: Double) -> Double {
         guard isPlaying else { return anchorTime }
-        return anchorTime + (CACurrentMediaTime() - anchorWall) * rate
+        // A display link's target timestamp is slightly in the future; never extrapolate behind
+        // the anchor (right after a seek).
+        return anchorTime + max(0, hostTime - anchorWall) * rate
     }
 
-    private func reanchor(at time: Double) {
+    private func reanchor(at time: Double, wall: CFTimeInterval) {
         anchorTime = time
-        anchorWall = CACurrentMediaTime()
+        anchorWall = wall
     }
+}
+
+/// The YouTube player as the playback clock, in video seconds. Reads the controller's smooth
+/// `VideoClock` per frame (never WebKit). `isPlaying` is the transport's intent (play was asked
+/// for), while the video itself may still be buffering; `rate` reads back the rate YouTube
+/// confirmed, and setting it requests the nearest rate YouTube offers.
+@MainActor
+final class VideoPlaybackClock: PlaybackClock {
+    let controller: YouTubePlayerController
+    private(set) var isPlaying = false
+
+    init(controller: YouTubePlayerController) {
+        self.controller = controller
+    }
+
+    func time(at hostTime: CFTimeInterval) -> Double { controller.time(at: hostTime) }
+
+    var rate: Double {
+        get { controller.rate }
+        set { controller.setRate(Self.snap(newValue, to: controller.availableRates)) }
+    }
+
+    /// YouTube's rates (0.25–2 in 0.25 steps) unless the player reported others.
+    static let defaultRates: [Double] = stride(from: 0.25, through: 2, by: 0.25).map { $0 }
+
+    static func snap(_ rate: Double, to rates: [Double]) -> Double {
+        SyncEditing.snapRate(rate, to: rates.isEmpty ? defaultRates : rates)
+    }
+
+    func play() {
+        isPlaying = true
+        controller.play()
+    }
+
+    func pause() {
+        isPlaying = false
+        controller.pause()
+    }
+
+    func seek(to time: Double) { controller.seek(to: max(0, time)) }
+
+    /// The player started or stopped on its own (its own controls, end of video): adopt it.
+    func playerStateChanged(playing: Bool) { isPlaying = playing }
 }

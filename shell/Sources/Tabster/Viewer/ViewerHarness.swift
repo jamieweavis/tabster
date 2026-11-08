@@ -9,7 +9,13 @@ import SwiftUI
 /// `TABSTER_APPEARANCE=dark|light`, `TABSTER_SCALE=<zoom>`, `TABSTER_WINDOW=<w>x<h>`, `TABSTER_SELFTEST=1` (exercise the transport and log),
 /// `TABSTER_SCROLLTEST=1` (scroll
 /// through the whole tab and log draw times), and `TABSTER_VIEW_SNAPSHOT=<png>` (write the window to
-/// a PNG after ~2 s, log perf stats and quit).
+/// a PNG after ~2 s, or `TABSTER_SNAPSHOT_AFTER=<secs>`, log perf stats and quit).
+///
+/// Video: `TABSTER_VIDEO=<YouTube id>` attaches the video (muted unless `TABSTER_VIDEO_MUTE=0`)
+/// with `TABSTER_SYNC_OFFSET=<secs>` / `TABSTER_SYNC_STRETCH=<x>`; `TABSTER_SYNC_PANEL=1` opens
+/// the sync editor (`TABSTER_SYNC_PERBAR=1` in per-bar mode), `TABSTER_VIDEO_PLACEMENT=right`
+/// puts the video beside the tab, and `TABSTER_VIDEO_LOG=<file>` writes every display frame
+/// (host, video and score time, played bar) and raw player sample as JSON lines.
 ///
 /// Hook (in `TabsterApp`): `ViewerHarness.debugHarnessIfRequested { ContentView() }`.
 enum ViewerHarness {
@@ -67,6 +73,18 @@ private struct HarnessView: View {
         let seek = env["TABSTER_SEEK"].flatMap(Double.init)
         // 1-based inclusive bar range, e.g. "23-24".
         let loop = env["TABSTER_LOOP"]?.split(separator: "-").compactMap { UInt32($0) }.map { $0 - 1 }
+        let videoID = env["TABSTER_VIDEO"]
+        let sync = SyncSpec.offset(offsetSecs: env["TABSTER_SYNC_OFFSET"].flatMap(Double.init) ?? 0,
+                                   stretch: env["TABSTER_SYNC_STRETCH"].flatMap(Double.init) ?? 1)
+        if videoID != nil {
+            // Volatile: don't touch the user's saved preferences.
+            UserDefaults.standard.setVolatileDomain([
+                TabViewerModel.showVideoKey: true,
+                "viewer.videoPlacement": env["TABSTER_VIDEO_PLACEMENT"] ?? "top",
+            ], forName: UserDefaults.argumentDomain)
+            // WebKit throttles an occluded page's timers (and so the player's samples).
+            NSApp.windows.first?.level = .floating
+        }
         let result = await Task.detached { () -> Result<(Core, Int64), Error> in
             do {
                 let dir = FileManager.default.temporaryDirectory
@@ -86,6 +104,11 @@ private struct HarnessView: View {
                 }
                 if state.speed <= 0 { state.speed = 1 }
                 try core.setPracticeState(tab: id, state: state)
+                if let videoID {
+                    let video = try core.addVideo(tab: id, urlOrId: videoID, label: "Original")
+                    try core.setDefaultVideo(id: video)
+                    try core.setVideoSync(id: video, sync: sync)
+                }
                 return .success((core, id))
             } catch {
                 return .failure(error)
@@ -95,6 +118,16 @@ private struct HarnessView: View {
         case let .success((core, id)):
             let model = TabViewerModel(core: core, tabID: id)
             model.autoplay = env["TABSTER_PLAY"] == "1"
+            model.startMuted = env["TABSTER_VIDEO_MUTE"] != "0"
+            if env["TABSTER_SYNC_PANEL"] == "1" { model.syncEditing = true }
+            if let path = env["TABSTER_VIDEO_LOG"] { VideoLog.start(model, path: path) }
+            if env["TABSTER_TAPTEST"] == "1" { scheduleTapTest(model) }
+            if env["TABSTER_SYNC_PERBAR"] == "1" {
+                Task {
+                    while model.session == nil { try? await Task.sleep(for: .milliseconds(50)) }
+                    model.setPerBarSync(true)
+                }
+            }
             if let scale = env["TABSTER_SCALE"].flatMap(Float.init) { model.zoom(by: scale - 1) }
             self.model = model
             if env["TABSTER_SCROLLTEST"] == "1" { scheduleScrollTest() }
@@ -151,6 +184,23 @@ private struct HarnessView: View {
         }
     }
 
+    /// Taps T three times, one bar apart, and logs where each tap put its bar.
+    private func scheduleTapTest(_ model: TabViewerModel) {
+        Task {
+            try? await Task.sleep(for: .seconds(5))
+            for _ in 0..<3 {
+                model.tapHere()
+                if let tap = model.lastTap {
+                    let bar = model.playedBars[tap.bar]
+                    report(String(format: "taptest: played bar %d (bar %d) -> video %.3f; map gives %.3f; keyframes %d",
+                                  tap.bar, bar.masterBar + 1, tap.video, model.barVideoTimes[tap.bar],
+                                  model.syncKeyframes.count))
+                }
+                try? await Task.sleep(for: .seconds(60.0 / 166 * 4))
+            }
+        }
+    }
+
     private func scheduleScrollTest() {
         Task {
             try? await Task.sleep(for: .seconds(1))
@@ -176,7 +226,8 @@ private struct HarnessView: View {
 
     private func scheduleSnapshot(to path: String) {
         Task {
-            let wait: Double = env["TABSTER_SELFTEST"] == "1" ? 8 : env["TABSTER_SCROLLTEST"] == "1" ? 6 : 2.2
+            let wait: Double = env["TABSTER_SNAPSHOT_AFTER"].flatMap(Double.init)
+                ?? (env["TABSTER_SELFTEST"] == "1" ? 8 : env["TABSTER_SCROLLTEST"] == "1" ? 6 : 2.2)
             try? await Task.sleep(for: .seconds(wait))
             guard let window = NSApp.windows.first(where: { $0.isVisible }),
                   let view = window.contentView?.superview ?? window.contentView
@@ -200,6 +251,12 @@ private struct HarnessView: View {
             }
             if let model {
                 report(String(format: "position %.2fs playing=%d", model.currentTime, model.isPlaying ? 1 : 0))
+                if let player = model.player {
+                    report(String(format: "video %@ state=%@ t=%.3f rate=%.2f failure=%@ videoClock=%d",
+                                  player.videoID ?? "-", player.state.rawValue, player.time(at: CACurrentMediaTime()),
+                                  player.rate, player.failure.map { "\($0)" } ?? "none", model.usingVideoClock ? 1 : 0))
+                }
+                VideoLog.finish()
             }
             // Also a real on-screen capture (includes toolbar controls cacheDisplay can't draw);
             // needs the Screen Recording permission, so it's best-effort.
@@ -237,6 +294,42 @@ private struct HarnessView: View {
             if let found = findScrollView(in: sub) { return found }
         }
         return nil
+    }
+}
+
+/// Per-frame JSON lines for checking the cursor against the video (`TABSTER_VIDEO_LOG`).
+@MainActor
+private enum VideoLog {
+    static var handle: FileHandle?
+    static let start0 = CACurrentMediaTime()
+
+    static func start(_ model: TabViewerModel, path: String) {
+        FileManager.default.createFile(atPath: path, contents: nil)
+        handle = FileHandle(forWritingAtPath: path)
+        model.frameObserver = { host, video, score, bar in
+            write(["type": "frame", "host": host - start0, "v": video, "s": score, "bar": bar.map { Int($0) } ?? -1,
+                   "running": model.player?.clock.isRunning ?? false])
+        }
+        Task {
+            while model.player == nil { try? await Task.sleep(for: .milliseconds(50)) }
+            model.player?.onSample = { t, host in write(["type": "sample", "t": t, "host": host - start0]) }
+            model.player?.onEvent = { type, body in
+                guard type != "time" else { return }
+                var fields = body.filter { $0.value is String || $0.value is NSNumber }
+                fields["host"] = CACurrentMediaTime() - start0
+                write(fields)
+            }
+        }
+    }
+
+    static func write(_ fields: [String: Any]) {
+        guard let handle, let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]) else { return }
+        handle.write(data + Data("\n".utf8))
+    }
+
+    static func finish() {
+        try? handle?.close()
+        handle = nil
     }
 }
 

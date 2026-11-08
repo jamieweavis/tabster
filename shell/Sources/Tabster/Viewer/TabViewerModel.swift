@@ -40,7 +40,12 @@ final class TabViewerModel {
         case failed(String)
     }
 
+    /// Speeds on the internal clock: 50–125 % in 5 % steps.
     static let speeds: [Double] = stride(from: 50, through: 125, by: 5).map { Double($0) / 100 }
+    /// Speeds while a YouTube video is the clock. YouTube only plays its own rates (0.25–2 in
+    /// 0.25 steps; it accepted 1.3 off-list in the spike, but only the listed rates are
+    /// documented), and below 50 % its audio is no use for practice.
+    static let videoSpeeds: [Double] = [0.5, 0.75, 1, 1.25]
     static let scaleRange: ClosedRange<Float> = 0.6...2.0
 
     let core: Core
@@ -51,14 +56,34 @@ final class TabViewerModel {
     private(set) var track: UInt32 = 0
     private(set) var scale: Float = 1
     private(set) var showRhythm: Bool = UserDefaults.standard.object(forKey: "viewer.showRhythm") as? Bool ?? true
-    private(set) var isPlaying = false
+    var isPlaying = false
     /// Playback position for the transport UI, refreshed ~10× a second while playing.
-    private(set) var displayTime: Double = 0
-    private(set) var speed: Double = 1
+    var displayTime: Double = 0
+    var speed: Double = 1
     /// Inclusive master-bar loop range.
     private(set) var loop: ClosedRange<UInt32>?
     private(set) var hasLayout = false
+    /// The video pane is on screen (the view owns the preference; see `setVideoVisible`).
     var showVideo = false
+
+    // Video and sync (see TabViewerModel+Video.swift).
+    /// The tab's attached YouTube videos.
+    var videos: [Video] = []
+    var selectedVideoID: Int64?
+    /// The selected video's sync, as applied to the session.
+    var sync: SyncSpec = .offset(offsetSecs: 0, stretch: 1)
+    /// The player, created when the tab first shows a video.
+    var player: YouTubePlayerController?
+    /// A YouTube video drives playback (false: the internal clock, e.g. no video or it failed).
+    var usingVideoClock = false
+    /// The sync editor (nudge bar, ruler) is open.
+    var syncEditing = false
+    var showAttachSheet = false
+    var showPointsSheet = false
+    /// Bumped on every sync change, so views that draw the sync (the ruler) refresh.
+    var syncRevision = 0
+    /// The last sync tap (played bar, video time, host time), for feedback in the sync bar.
+    var lastTap: (bar: Int, video: Double, at: Double)?
 
     var duration: Double { info?.durationSecs ?? 0 }
     var currentTrack: TrackInfo? { info?.tracks.first { $0.index == track } }
@@ -67,9 +92,19 @@ final class TabViewerModel {
     @ObservationIgnored weak var sink: TabCanvasSink? {
         didSet { pushState() }
     }
-    @ObservationIgnored private var clock: PlaybackClock = InternalClock()
-    @ObservationIgnored private var playedBars: [PlayedBar] = []
-    @ObservationIgnored private var position: PlaybackPosition?
+    @ObservationIgnored var clock: PlaybackClock = InternalClock()
+    @ObservationIgnored private(set) var playedBars: [PlayedBar] = []
+    @ObservationIgnored var position: PlaybackPosition?
+    /// Video time of every played bar's start under the current sync (for taps and the ruler).
+    @ObservationIgnored var barVideoTimes: [Double] = []
+    /// Bars the user placed explicitly in per-bar mode (taps, drags).
+    @ObservationIgnored var syncKeyframes: Set<Int> = []
+    @ObservationIgnored var syncSaveTask: Task<Void, Never>?
+    @ObservationIgnored var pendingSyncSave: (id: Int64, spec: SyncSpec)?
+    /// Start the player muted (debug harness).
+    @ObservationIgnored var startMuted = false
+    /// Debug harness: called every display frame with (host time, clock time, score time, played bar).
+    @ObservationIgnored var frameObserver: ((Double, Double, Double, UInt32?) -> Void)?
     @ObservationIgnored private var list: DisplayList?
     @ObservationIgnored private var viewportWidth: Float = 0
     @ObservationIgnored private var resizeTask: Task<Void, Never>?
@@ -77,7 +112,7 @@ final class TabViewerModel {
     @ObservationIgnored private var layoutGeneration = 0
     @ObservationIgnored private let worker = LayoutWorker()
     @ObservationIgnored private var lastDisplayUpdate: CFTimeInterval = 0
-    @ObservationIgnored private var loopSpan: Range<Double>?
+    @ObservationIgnored private(set) var loopSpan: Range<Double>?
     @ObservationIgnored private var restoredPosition: Double?
     @ObservationIgnored private let openedAt = CACurrentMediaTime()
     @ObservationIgnored private var firstLayoutDone = false
@@ -108,12 +143,14 @@ final class TabViewerModel {
                 let info = session.info()
                 let state = try? core.practiceState(tab: id)
                 let bars = session.playedBars().map { PlayedBar(startSecs: $0.startSecs, masterBar: $0.masterBar) }
+                let videos = (try? core.videos(tab: id)) ?? []
                 var list: DisplayList?
                 if width > 0 {
                     let track = state.map(\.track).flatMap { t in info.tracks.contains { $0.index == t } ? t : nil } ?? 0
                     list = session.layout(options: LayoutOptions(track: track, width: width, scale: scale, showRhythm: showRhythm))
                 }
-                return .success(Opened(session: session, info: info, state: state, playedBars: bars, list: list,
+                return .success(Opened(session: session, info: info, state: state, playedBars: bars, videos: videos,
+                                       list: list,
                                        openTabMs: openTabMs, workMs: (CACurrentMediaTime() - start) * 1000))
             } catch {
                 return .failure(error)
@@ -126,6 +163,7 @@ final class TabViewerModel {
             playedBars = opened.playedBars
             if let state = opened.state { restore(state, info: opened.info) }
             phase = .ready
+            videosLoaded(opened.videos)
             ViewerMetrics.openMs = (CACurrentMediaTime() - openedAt) * 1000
             ViewerMetrics.openWork = (opened.openTabMs, opened.workMs)
             ViewerLog.log.info("Opened tab \(id) in \((CACurrentMediaTime() - self.openedAt) * 1000, format: .fixed(precision: 1)) ms")
@@ -146,6 +184,7 @@ final class TabViewerModel {
         let info: TabInfo
         let state: PracticeState?
         let playedBars: [PlayedBar]
+        let videos: [Video]
         let list: DisplayList?
         let openTabMs: Double
         let workMs: Double
@@ -162,7 +201,7 @@ final class TabViewerModel {
         }
         if state.lastPositionSecs > 0, state.lastPositionSecs < info.durationSecs {
             restoredPosition = state.lastPositionSecs
-            clock.seek(to: state.lastPositionSecs)
+            seekClock(toScore: state.lastPositionSecs)
             displayTime = state.lastPositionSecs
         }
     }
@@ -208,10 +247,10 @@ final class TabViewerModel {
         let first = !firstLayoutDone
         if first { ViewerMetrics.firstLayoutMs = (CACurrentMediaTime() - openedAt) * 1000 }
         firstLayoutDone = true
-        position = session?.positionAtScore(scoreSecs: clock.currentTime)
+        position = cursorPosition(atScore: currentTime)
         sink?.show(list, anchorBar: first ? nil : anchor)
         if first {
-            updateLoopSpan(near: clock.currentTime)
+            updateLoopSpan(near: currentTime)
             sink?.showLoop(loop)
         }
         sink?.moveCursor(position?.cursor, follow: first ? restoredPosition != nil : isPlaying)
@@ -248,11 +287,14 @@ final class TabViewerModel {
 
     func play() {
         guard session != nil, !isPlaying else { return }
-        var t = clock.currentTime
+        let now = currentTime
+        var t = now
         if t >= duration - 0.01 { t = 0 }
         updateLoopSpan(near: t)
         if let span = loopSpan, !span.contains(t) { t = span.lowerBound }
-        clock.seek(to: t)
+        // A video keeps its own position (e.g. still in the intro, before bar 1) unless the
+        // transport has to move it.
+        if !usingVideoClock || t != now { seekClock(toScore: t) }
         clock.play()
         isPlaying = true
         sink?.playingChanged(true)
@@ -265,58 +307,93 @@ final class TabViewerModel {
         isPlaying = false
         sink?.playingChanged(false)
         refresh(follow: false)
-        displayTime = clock.currentTime
+        displayTime = clampedScore(currentTime)
         scheduleSave(immediately: true)
     }
 
     func seek(to secs: Double) {
         let t = min(max(0, secs), duration)
-        clock.seek(to: t)
+        seekClock(toScore: t)
         displayTime = t
         updateLoopSpan(near: t)
         refresh(follow: true)
         if !isPlaying { scheduleSave() }
     }
 
-    /// Per-frame update from the canvas's display link. Returns the cursor to draw.
-    func frameTick() -> Cursor? {
-        guard isPlaying, let session else { return position?.cursor }
-        var t = clock.currentTime
+    /// Per-frame update from the canvas's display link, for the frame shown at `hostTime` (the
+    /// link's target timestamp). Returns the cursor to draw.
+    func frameTick(at hostTime: CFTimeInterval) -> Cursor? {
+        guard isPlaying, session != nil else { return position?.cursor }
+        let media = clock.time(at: hostTime)
+        var t = scoreTime(fromMedia: media)
         if let span = loopSpan, t >= span.upperBound {
+            // Seek on crossing; the video clock jumps to the target at once and holds there
+            // while YouTube catches up (~0.5 s).
             t = span.lowerBound
-            clock.seek(to: t)
-        } else if t >= duration {
+            seekClock(toScore: t)
+        } else if t >= duration, !usingVideoClock {
             t = duration
             pause()
-            clock.seek(to: t)
+            seekClock(toScore: t)
         }
-        position = session.positionAtScore(scoreSecs: t)
+        // A video plays on past the tab's ends (intro, outro); the cursor waits at the edge.
+        position = cursorPosition(atScore: t)
+        frameObserver?(hostTime, media, t, position?.playedBar)
         let now = CACurrentMediaTime()
         if now - lastDisplayUpdate > 0.1 {
             lastDisplayUpdate = now
-            displayTime = t
+            displayTime = clampedScore(t)
         }
         return position?.cursor
     }
 
-    var currentTime: Double { clock.currentTime }
+    /// Current position in score seconds (outside 0...duration while a video plays its intro or
+    /// outro).
+    var currentTime: Double { scoreTime(fromMedia: clock.currentTime) }
 
-    private func refresh(follow: Bool) {
-        position = session?.positionAtScore(scoreSecs: clock.currentTime)
+    func refresh(follow: Bool) {
+        position = cursorPosition(atScore: currentTime)
         sink?.moveCursor(position?.cursor, follow: follow)
+    }
+
+    // MARK: - Time axes
+
+    /// Score seconds for the clock's media time.
+    func scoreTime(fromMedia media: Double) -> Double {
+        guard usingVideoClock, let session else { return media }
+        return session.videoToScore(videoSecs: media)
+    }
+
+    /// The clock's media time for score seconds.
+    func mediaTime(fromScore score: Double) -> Double {
+        guard usingVideoClock, let session else { return score }
+        return session.scoreToVideo(scoreSecs: score)
+    }
+
+    /// Every seek goes through here, so it lands on the clock's own time axis.
+    func seekClock(toScore score: Double) {
+        clock.seek(to: mediaTime(fromScore: score))
+    }
+
+    func clampedScore(_ t: Double) -> Double { min(max(0, t), duration) }
+
+    func cursorPosition(atScore t: Double) -> PlaybackPosition? {
+        guard let session else { return nil }
+        // Keep the cursor on the tab while the video is before bar 1 or after the last bar.
+        return session.positionAtScore(scoreSecs: min(max(0, t), max(0, duration - 0.0005)))
     }
 
     /// Seek to a click in layout coordinates.
     func seek(atX x: Float, y: Float) {
         guard let session,
-              let secs = session.scoreSecsAtPoint(x: x, y: y, nearScoreSecs: clock.currentTime)
+              let secs = session.scoreSecsAtPoint(x: x, y: y, nearScoreSecs: currentTime)
         else { return }
         seek(to: secs)
     }
 
     private var currentPlayedIndex: Int {
         if let p = position?.playedBar { return Int(p) }
-        let t = clock.currentTime
+        let t = currentTime
         return max(0, (playedBars.lastIndex { $0.startSecs <= t } ?? 0))
     }
 
@@ -330,14 +407,21 @@ final class TabViewerModel {
         let i = currentPlayedIndex
         guard i < playedBars.count else { return }
         // Near the start of a bar, go to the previous one; otherwise restart this one.
-        let target = clock.currentTime - playedBars[i].startSecs < 0.3 / max(speed, 0.1) ? max(0, i - 1) : i
+        let target = currentTime - playedBars[i].startSecs < 0.3 / max(speed, 0.1) ? max(0, i - 1) : i
         seek(to: playedBars[target].startSecs)
     }
 
+    /// The speeds the current clock offers.
+    var speedOptions: [Double] { usingVideoClock ? Self.videoSpeeds : Self.speeds }
+
     func setSpeed(_ value: Double) {
-        speed = value
-        clock.rate = value
+        speed = Self.snap(value, to: speedOptions)
+        clock.rate = speed
         scheduleSave()
+    }
+
+    static func snap(_ value: Double, to options: [Double]) -> Double {
+        options.min { abs($0 - value) < abs($1 - value) } ?? 1
     }
 
     // MARK: - Loop
@@ -358,17 +442,17 @@ final class TabViewerModel {
 
     func setLoop(_ range: ClosedRange<UInt32>?) {
         loop = range
-        updateLoopSpan(near: clock.currentTime)
+        updateLoopSpan(near: currentTime)
         sink?.showLoop(range)
-        if isPlaying, let span = loopSpan, !span.contains(clock.currentTime) {
-            clock.seek(to: span.lowerBound)
+        if isPlaying, let span = loopSpan, !span.contains(currentTime) {
+            seekClock(toScore: span.lowerBound)
         }
         scheduleSave()
     }
 
     /// Converts the master-bar loop into a score-time span: the pass through the loop's first bar
     /// at or before `t` (or the first pass), up to the end of the loop's last bar after it.
-    private func updateLoopSpan(near t: Double) {
+    func updateLoopSpan(near t: Double) {
         guard let loop, !playedBars.isEmpty else {
             loopSpan = nil
             return
@@ -393,7 +477,7 @@ final class TabViewerModel {
         sink.playingChanged(isPlaying)
     }
 
-    private func scheduleSave(immediately: Bool = false) {
+    func scheduleSave(immediately: Bool = false) {
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             if !immediately {
@@ -413,7 +497,7 @@ final class TabViewerModel {
             speed: speed,
             loopStartBar: loop?.lowerBound,
             loopEndBar: loop?.upperBound,
-            lastPositionSecs: clock.currentTime
+            lastPositionSecs: clampedScore(currentTime)
         )
         let core = core
         let id = tabID
@@ -432,13 +516,14 @@ final class TabViewerModel {
     }
 
     func close(synchronously: Bool = false) {
-        if isPlaying {
+        if isPlaying || usingVideoClock {
             clock.pause()
             isPlaying = false
             sink?.playingChanged(false)
         }
         saveTask?.cancel()
         resizeTask?.cancel()
+        flushSyncSave(synchronously: synchronously)
         save(synchronously: synchronously)
     }
 

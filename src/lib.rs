@@ -693,3 +693,10 @@ fn note_name(pitch: u8) -> &'static str {
 pub fn youtube_id(input: String) -> Option<String> {
     library::parse_youtube_id(&input)
 }
+
+/// Sync points from a per-bar `points` array (one video time per played bar,
+/// in played order; a trailing end time is ignored).
+#[uniffi::export]
+pub fn bar_points_sync(points: Vec<f64>) -> SyncSpec {
+    sync::from_bar_points(&points)
+}
