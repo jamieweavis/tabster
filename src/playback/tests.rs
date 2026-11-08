@@ -480,6 +480,29 @@ fn metronome_and_count_in() {
 }
 
 #[test]
+fn notes_muted_leaves_only_the_metronome() {
+    let mut e = engine(&four_quarters());
+    e.set_metronome(true);
+    e.set_notes_muted(true);
+    e.set_playing(true);
+    render_secs(&mut e, 1.2);
+    let ons = e.sink().ons();
+    let sec = SAMPLE_RATE as usize;
+    assert_eq!(
+        ons.iter().map(|o| (o.0, o.1, o.2)).collect::<Vec<_>>(),
+        [
+            (0, PERCUSSION_CHANNEL, CLICK_ACCENT_KEY),
+            (sec / 2, PERCUSSION_CHANNEL, CLICK_KEY),
+            (sec, PERCUSSION_CHANNEL, CLICK_KEY),
+        ]
+    );
+    // Unmuting brings the notes back from the next one due.
+    e.set_notes_muted(false);
+    render_secs(&mut e, 0.5);
+    assert!(e.sink().ons().iter().any(|o| o.1 == 0 && o.2 == 69));
+}
+
+#[test]
 fn stops_at_the_end() {
     let mut e = engine(&four_quarters());
     e.set_playing(true);

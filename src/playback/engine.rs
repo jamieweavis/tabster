@@ -83,6 +83,8 @@ pub struct Engine<S: Sink> {
     speed: f64,
     playing: bool,
     metronome: bool,
+    /// Every track silent (only the metronome and count-in sound), e.g. over a video's audio.
+    notes_muted: bool,
     muted: Vec<bool>,
     soloed: Vec<bool>,
     loop_span: Option<(f64, f64)>,
@@ -107,6 +109,7 @@ impl<S: Sink> Engine<S> {
             speed: 1.0,
             playing: false,
             metronome: false,
+            notes_muted: false,
             muted: vec![false; tracks],
             soloed: vec![false; tracks],
             loop_span: None,
@@ -188,6 +191,12 @@ impl<S: Sink> Engine<S> {
         self.metronome = on;
     }
 
+    /// Silence every track, leaving only the metronome and count-in clicks.
+    pub fn set_notes_muted(&mut self, muted: bool) {
+        self.notes_muted = muted;
+        self.silence_inaudible();
+    }
+
     pub fn set_track_mute(&mut self, track: usize, muted: bool) {
         if let Some(m) = self.muted.get_mut(track) {
             *m = muted;
@@ -205,7 +214,8 @@ impl<S: Sink> Engine<S> {
     fn audible(&self, track: u16) -> bool {
         let t = usize::from(track);
         let any_solo = self.soloed.iter().any(|&s| s);
-        !self.muted.get(t).copied().unwrap_or(false)
+        !self.notes_muted
+            && !self.muted.get(t).copied().unwrap_or(false)
             && (!any_solo || self.soloed.get(t).copied().unwrap_or(false))
     }
 

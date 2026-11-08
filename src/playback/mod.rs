@@ -110,6 +110,12 @@ impl TabSynth {
         self.engine.lock().set_speed(speed);
     }
 
+    /// Silence every track so only the metronome (and count-in) sounds: a click track to play
+    /// over a video's audio.
+    pub fn set_notes_muted(&self, muted: bool) {
+        self.engine.lock().set_notes_muted(muted);
+    }
+
     pub fn set_track_mute(&self, track: u32, muted: bool) {
         self.engine.lock().set_track_mute(track as usize, muted);
     }

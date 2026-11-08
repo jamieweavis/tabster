@@ -142,6 +142,7 @@ extension TabViewerModel {
         let videoClock = VideoPlaybackClock(controller: player)
         clock = videoClock
         usingVideoClock = true
+        configureSynthLayers()
         let start = max(0, mediaTime(fromScore: score))
         if player.videoID != video.youtubeId {
             player.load(videoID: video.youtubeId, startSeconds: start, autoplay: false)
@@ -165,9 +166,11 @@ extension TabViewerModel {
         let score = clampedScore(currentTime)
         let wasPlaying = isPlaying
         clock.pause()
+        synthClock?.stopFollowing()
         usingVideoClock = false
+        configureSynthLayers()
         let internalClock: PlaybackClock
-        if tabAudio, let synthClock {
+        if tabAudio || metronome, let synthClock {
             internalClock = synthClock
         } else {
             internalClock = InternalClock()

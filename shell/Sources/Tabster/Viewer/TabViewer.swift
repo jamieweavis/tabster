@@ -170,8 +170,7 @@ private struct ViewerToolbar: ToolbarContent {
                     Toggle(isOn: Binding(get: { model.metronome }, set: { model.metronome = $0 })) {
                         Label("Metronome", systemImage: "metronome")
                     }
-                    .help("Metronome")
-                    .disabled(!model.tabAudio || model.usingVideoClock)
+                    .help(model.usingVideoClock ? "Metronome over the video" : "Metronome")
                 }
             }
 

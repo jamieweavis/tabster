@@ -58,7 +58,11 @@ final class TabViewerModel {
     private(set) var scale: Float = 1
     private(set) var showRhythm: Bool = UserDefaults.standard.object(forKey: "viewer.showRhythm") as? Bool ?? true
     var isPlaying = false {
-        didSet { if isPlaying != oldValue { practicePlayingChanged() } }
+        didSet {
+            guard isPlaying != oldValue else { return }
+            practicePlayingChanged()
+            if !isPlaying, usingVideoClock { synthClock?.stopFollowing() }
+        }
     }
     /// Playback position for the transport UI, refreshed ~10× a second while playing.
     var displayTime: Double = 0
@@ -103,11 +107,17 @@ final class TabViewerModel {
     var tabAudio = UserDefaults.standard.object(forKey: "tabAudio") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(tabAudio, forKey: "tabAudio")
+            configureSynthLayers()
             if !usingVideoClock { adoptInternalClock() }
         }
     }
+    /// Click along: over the tab audio, on its own, or over a video's audio (the synth then
+    /// follows the video clock with its notes muted).
     var metronome = false {
-        didSet { synthClock?.synth.setMetronome(enabled: metronome) }
+        didSet {
+            configureSynthLayers()
+            if !usingVideoClock, !tabAudio { adoptInternalClock() }
+        }
     }
     @ObservationIgnored private(set) var playedBars: [PlayedBar] = []
     @ObservationIgnored var position: PlaybackPosition?
@@ -388,6 +398,7 @@ final class TabViewerModel {
             seekClock(toScore: t)
         }
         lastTickScore = t
+        if usingVideoClock { followVideo(score: t, media: media, at: hostTime) }
         // A video plays on past the tab's ends (intro, outro); the cursor waits at the edge.
         position = cursorPosition(atScore: t)
         frameObserver?(hostTime, media, t, position?.playedBar)
@@ -526,13 +537,33 @@ final class TabViewerModel {
     private func loadSynth(_ session: TabSession) {
         Task { [weak self] in
             guard let clock = await SynthPlaybackClock.make(session: session), let self else { return }
-            clock.synth.setMetronome(enabled: self.metronome)
             clock.countInBars = self.countIn ? 1 : 0
             clock.synth.setLoop(startSecs: self.loopSpan?.lowerBound, endSecs: self.loopSpan?.upperBound)
             self.synthClock = clock
             self.synthAvailable = true
-            if !self.usingVideoClock && self.tabAudio { self.adoptInternalClock() }
+            self.configureSynthLayers()
+            if !self.usingVideoClock && (self.tabAudio || self.metronome) { self.adoptInternalClock() }
         }
+    }
+
+    /// What the synth sounds: the metronome if on, and the tab's notes only when tab audio is
+    /// on and no video is playing its own audio.
+    func configureSynthLayers() {
+        guard let synth = synthClock?.synth else { return }
+        synth.setMetronome(enabled: metronome)
+        synth.setNotesMuted(muted: usingVideoClock || !tabAudio)
+    }
+
+    /// While a video is the clock, keep the synth's metronome on the video's beat.
+    private func followVideo(score t: Double, media: Double, at hostTime: CFTimeInterval) {
+        guard let synthClock else { return }
+        guard metronome, player?.state == .playing else {
+            synthClock.follow(target: nil, rate: 0, at: hostTime)
+            return
+        }
+        // Score seconds per second: the video's rate × the sync map's local slope.
+        let slope = (scoreTime(fromMedia: media + 0.1) - scoreTime(fromMedia: media)) / 0.1
+        synthClock.follow(target: t, rate: clock.rate * slope, at: hostTime)
     }
 
     // MARK: - Practice state
