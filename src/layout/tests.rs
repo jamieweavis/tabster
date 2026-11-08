@@ -843,3 +843,392 @@ fn song_like_all_tracks() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Rests, ties, drums, labels
+
+fn texts(list: &DisplayList) -> Vec<(f32, f32, &str)> {
+    list.systems
+        .iter()
+        .flat_map(|s| &s.primitives)
+        .filter_map(|p| match p {
+            Primitive::Text { x, y, text, .. } => Some((*x, *y, text.as_str())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Texts below the tab staff (multi-rest counts, tuplet numbers).
+fn below_staff(list: &DisplayList) -> Vec<&str> {
+    list.systems
+        .iter()
+        .flat_map(|s| {
+            let bottom = s.bars[0].frame.y + s.bars[0].frame.height;
+            s.primitives.iter().filter_map(move |p| match p {
+                Primitive::Text { y, text, .. } if *y > bottom => Some(text.as_str()),
+                _ => None,
+            })
+        })
+        .collect()
+}
+
+fn curves(list: &DisplayList) -> usize {
+    list.systems
+        .iter()
+        .flat_map(|s| &s.primitives)
+        .filter(|p| matches!(p, Primitive::Curve { .. }))
+        .count()
+}
+
+/// 2 busy bars, `n` whole-rest bars, 2 busy bars.
+fn with_rests(n: usize) -> Score {
+    let mut score = simple(2);
+    for _ in 0..n {
+        score.master_bars.push(MasterBar::default());
+        score.tracks[0].bars.push(Bar {
+            voices: vec![Voice {
+                beats: vec![rest(1)],
+            }],
+        });
+    }
+    let tail = simple(2);
+    score.master_bars.extend(tail.master_bars);
+    score.tracks[0].bars.extend(tail.tracks[0].bars.clone());
+    score
+}
+
+#[test]
+fn multi_rest_bars_cover_each_bar_and_cursor_glides() {
+    let score = with_rests(6);
+    for width in [300.0, 800.0, 1400.0] {
+        let list = layout(&score, &opts(width));
+        check_invariants(&score, &list);
+        let bars: Vec<&BarBox> = all_bars(&list)
+            .filter(|b| (2..8).contains(&b.master_bar))
+            .collect();
+        assert_eq!(bars.len(), 6, "one slice per collapsed bar");
+        let sys = |mb: u32| cursor(&list, mb, 0, 3840).unwrap().system;
+        assert!((2..8).all(|mb| sys(mb) == sys(2)), "multi-rest never split");
+        assert_eq!(below_staff(&list), ["6"], "bar count drawn once");
+        let mut last_x = f32::MIN;
+        for mb in 2..8u32 {
+            for t in (0..=3840).step_by(240) {
+                let c = cursor(&list, mb, t, 3840).unwrap();
+                assert!(c.x >= last_x - 0.01, "cursor moves forward ({mb}, {t})");
+                assert!(c.x >= c.bar_frame.x && c.x <= right(&c.bar_frame) + 0.01);
+                last_x = c.x;
+            }
+        }
+        // Clicking a slice seeks to its bar.
+        for b in &bars {
+            let y = b.frame.y + b.frame.height / 2.0;
+            let x = b.frame.x + b.frame.width / 2.0;
+            assert_eq!(hit_test(&list, x, y), Some((b.master_bar, 0)));
+        }
+        if list.systems.len() == 1 {
+            let total: f32 = bars.iter().map(|b| b.frame.width).sum();
+            assert!(total < 160.0, "multi-rest is compact ({total})");
+        }
+    }
+
+    // A section breaks the run in two; so does a repeat end.
+    let mut score = with_rests(6);
+    score.master_bars[5].section = Some(Section {
+        letter: String::new(),
+        text: "Verse".into(),
+    });
+    let list = layout(&score, &opts(1200.0));
+    check_invariants(&score, &list);
+    assert_eq!(below_staff(&list), ["3", "3"]);
+    assert!(texts(&list).iter().any(|t| t.2 == "Verse"));
+    score.master_bars[3].repeat_end = 2;
+    let list = layout(&score, &opts(1200.0));
+    check_invariants(&score, &list);
+    assert_eq!(below_staff(&list), ["2", "3"]);
+
+    // A single rest bar isn't a multi-rest.
+    let score = with_rests(1);
+    let list = layout(&score, &opts(1200.0));
+    check_invariants(&score, &list);
+    assert!(below_staff(&list).is_empty());
+}
+
+#[test]
+fn rest_only_bars_are_narrow() {
+    // Busy, busy, rest, busy, busy, rest (two half rests).
+    let mut score = with_rests(1);
+    score.master_bars.push(MasterBar::default());
+    score.tracks[0].bars.push(Bar {
+        voices: vec![Voice {
+            beats: vec![rest(2), rest(2)],
+        }],
+    });
+    let list = layout(&score, &opts(1600.0));
+    check_invariants(&score, &list);
+    let width = |mb: u32| {
+        all_bars(&list)
+            .find(|b| b.master_bar == mb)
+            .unwrap()
+            .frame
+            .width
+    };
+    let busy = width(1);
+    for rest_bar in [2, 5] {
+        assert!(
+            width(rest_bar) < busy * 0.4,
+            "rest bar {rest_bar}: {} vs {busy}",
+            width(rest_bar)
+        );
+    }
+    // A full system holding a rest bar still fills the width.
+    let score = with_rests(1);
+    let list = layout(&score, &opts(700.0));
+    assert!(list.systems.len() > 1);
+    let s = &list.systems[0];
+    assert!((right(&s.bars.last().unwrap().frame) - (700.0 - 16.0)).abs() < 0.5);
+}
+
+/// One bar holding an open chord then tying it over, then whole-bar ties.
+fn tied_chords(bars: usize) -> Score {
+    let shape = [(1, 0), (2, 1), (3, 0), (4, 2), (5, 3)];
+    let tie = |n: &mut Note| n.tie_destination = true;
+    let mut b = ScoreBuilder::new(6).bar(vec![
+        beat(2, &shape),
+        fx(beat(4, &shape), tie),
+        fx(beat(4, &shape), tie),
+    ]);
+    for _ in 1..bars {
+        b = b.bar(vec![fx(beat(1, &shape), tie)]);
+    }
+    b.build()
+}
+
+fn parens(s: &System) -> usize {
+    s.primitives
+        .iter()
+        .filter(|p| matches!(p, Primitive::Text { text, .. } if text.starts_with('(')))
+        .count()
+}
+
+#[test]
+fn ties_are_arcs_except_at_system_start() {
+    // One system: the chord is written once and every tie is an arc.
+    let score = tied_chords(3);
+    let list = layout(&score, &opts(1200.0));
+    assert_eq!(list.systems.len(), 1);
+    assert_eq!(parens(&list.systems[0]), 0, "no (n) within a system");
+    assert_eq!(texts(&list).iter().filter(|t| t.2 == "3").count(), 1);
+    assert_eq!(curves(&list), 5 * 4, "one arc per tied note");
+
+    // Narrow: every bar starts a system, so its tied notes are written as "(n)".
+    let list = layout(&score, &opts(150.0));
+    assert_eq!(list.systems.len(), 3);
+    assert_eq!(parens(&list.systems[0]), 0);
+    for s in &list.systems[1..] {
+        assert_eq!(parens(s), 5, "tied chord written out at system start");
+    }
+    // Ties running off the end of a system get an open arc.
+    let end = right(&list.systems[0].bars[0].frame);
+    let open = list.systems[0]
+        .primitives
+        .iter()
+        .filter(|p| matches!(p, Primitive::Curve { x2, .. } if *x2 > end))
+        .count();
+    assert_eq!(open, 5);
+}
+
+#[test]
+fn track_without_tab_gets_label() {
+    // Like an untuned (vocal, synth) track: a zero-pitched placeholder string.
+    let mut score = simple(6);
+    score.tracks[0].tuning = vec![0];
+    let list = layout(&score, &opts(900.0));
+    check_invariants(&score, &list);
+    let t = texts(&list);
+    assert!(t.iter().any(|t| t.2 == "No tab for this track"));
+    assert_eq!(below_staff(&list), ["6"], "one multi-rest");
+    assert!(!t.iter().any(|t| t.2 == "12"), "no fret numbers");
+    assert_eq!(list.systems.len(), 1);
+    let staff_lines = list.systems[0]
+        .primitives
+        .iter()
+        .filter(
+            |p| matches!(p, Primitive::Line { y1, y2, x1, x2, .. } if y1 == y2 && x2 - x1 > 120.0),
+        )
+        .count();
+    assert!(staff_lines >= 6, "an empty staff is drawn");
+
+    // Notes off the staff (string 0, or past the last string) are skipped.
+    let mut score = simple(2);
+    let beats = &mut score.tracks[0].bars[0].voices[0].beats;
+    beats[0].notes[0].string = 9;
+    beats[1].notes[0].string = 0;
+    let list = layout(&score, &opts(900.0));
+    check_invariants(&score, &list);
+    assert!(!texts(&list).iter().any(|t| t.2 == "No tab for this track"));
+}
+
+#[test]
+fn labels_above_staff_do_not_collide() {
+    let mut score = with_rests(4);
+    let sec = |text: &str| {
+        Some(Section {
+            letter: String::new(),
+            text: text.into(),
+        })
+    };
+    score.master_bars[0].section = sec("Intro");
+    score.tracks[0].bars[0].voices[0].beats[0].chord = Some("Am7".into());
+    score.master_bars[2].section = sec("Post-Chorus");
+    score.master_bars[6].section = sec("Outro");
+    score.tempo_changes = vec![TempoChange {
+        bar: 6,
+        position: 0.0,
+        bpm: 90.0,
+    }];
+    score.tracks[0].bars[6].voices[0].beats[0].chord = Some("Cmaj7".into());
+    for width in [500.0, 1200.0] {
+        let list = layout(&score, &opts(width));
+        check_invariants(&score, &list);
+        for s in &list.systems {
+            let staff_top = s.bars[0].frame.y;
+            let boxes: Vec<(f32, f32, f32, f32)> = s
+                .primitives
+                .iter()
+                .filter_map(|p| match p {
+                    Primitive::Text {
+                        x,
+                        y,
+                        text,
+                        size,
+                        anchor,
+                        ..
+                    } if *y < staff_top => {
+                        let w = text.chars().count() as f32 * CHAR_WIDTH * size;
+                        let (x0, y0) = match anchor {
+                            TextAnchor::Center => (x - w / 2.0, y - size / 2.0),
+                            TextAnchor::Leading => (*x, y - size * 0.8),
+                        };
+                        Some((x0, y0, x0 + w, y0 + size))
+                    }
+                    _ => None,
+                })
+                .collect();
+            for (a, p) in boxes.iter().enumerate() {
+                for q in &boxes[a + 1..] {
+                    let overlap =
+                        p.0 < q.2 - 0.5 && q.0 < p.2 - 0.5 && p.1 < q.3 - 0.5 && q.1 < p.3 - 0.5;
+                    assert!(!overlap, "labels overlap: {p:?} {q:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn drums_placed_by_instrument() {
+    let mut score = simple(1);
+    score.tracks[0] = Track {
+        name: "Drums".into(),
+        is_percussion: true,
+        tuning: vec![0; 6],
+        bars: vec![Bar {
+            voices: vec![Voice {
+                beats: vec![
+                    beat(4, &[(1, 42), (2, 36)]),
+                    beat(4, &[(1, 42), (2, 38)]),
+                    beat(4, &[(1, 49), (2, 36)]),
+                    beat(4, &[(1, 51), (2, 43)]),
+                ],
+            }],
+        }],
+        ..Default::default()
+    };
+    let list = layout(&score, &opts(800.0));
+    check_invariants(&score, &list);
+    let prims = &list.systems[0].primitives;
+    let xs: Vec<f32> = prims
+        .iter()
+        .filter_map(|p| match p {
+            Primitive::Text { y, text, .. } if text == "x" => Some(*y),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(xs.len(), 4, "hi-hats, crash and ride are x heads");
+    let staff_top = list.systems[0].bars[0].frame.y + 13.0 / 2.0;
+    assert!(xs[0] < staff_top, "hi-hat above the staff");
+    assert!(xs[2] < xs[0], "crash above the hi-hat");
+    assert!((xs[3] - staff_top).abs() < 0.01, "ride on the top line");
+    let heads: Vec<f32> = prims
+        .iter()
+        .filter_map(|p| match p {
+            Primitive::Dot { y, radius, .. } if *radius > 3.0 => Some(*y),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(heads.len(), 4);
+    assert!(heads[1] < heads[0], "snare above kick");
+    assert!(
+        heads[3] > heads[1] && heads[3] < heads[0],
+        "floor tom between"
+    );
+}
+
+#[test]
+fn rest_shapes_distinct() {
+    let score = ScoreBuilder::new(6)
+        .bar(vec![rest(2), beat(4, &[(1, 0)]), rest(4)])
+        .bar(vec![
+            rest(8),
+            beat(8, &[(1, 0)]),
+            rest(16),
+            beat(16, &[(1, 0)]),
+            beat(8, &[(1, 0)]),
+            beat(2, &[(1, 0)]),
+        ])
+        .bar(vec![rest(1)])
+        .bar(vec![beat(1, &[(1, 0)])])
+        .build();
+    let list = layout(&score, &opts(1000.0));
+    check_invariants(&score, &list);
+    let blocks: Vec<Rect> = list.systems[0]
+        .primitives
+        .iter()
+        .filter_map(|p| match p {
+            Primitive::Rect { rect, .. } if rect.width > 8.0 && rect.height > 3.0 => Some(*rect),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(blocks.len(), 2, "only whole and half rests are blocks");
+    // The half rest sits on its line; the whole rest hangs from its line.
+    let lines: Vec<f32> = list.systems[0]
+        .primitives
+        .iter()
+        .filter_map(|p| match p {
+            Primitive::Line { y1, y2, x1, x2, .. } if y1 == y2 && x2 - x1 < 20.0 => Some(*y1),
+            _ => None,
+        })
+        .collect();
+    let (half, whole) = (blocks[0], blocks[1]);
+    assert!(
+        lines
+            .iter()
+            .any(|&y| (y - (half.y + half.height)).abs() < 0.01)
+    );
+    assert!(lines.iter().any(|&y| (y - whole.y).abs() < 0.01));
+}
+
+#[test]
+fn snapshot_rests_and_ties() {
+    let mut score = tied_chords(2);
+    for _ in 0..3 {
+        score.master_bars.push(MasterBar::default());
+        score.tracks[0].bars.push(Bar {
+            voices: vec![Voice {
+                beats: vec![rest(1)],
+            }],
+        });
+    }
+    let list = layout(&score, &opts(500.0));
+    insta::assert_debug_snapshot!(rounded(&list));
+}
