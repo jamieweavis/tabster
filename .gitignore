@@ -7,3 +7,8 @@
 /shell/Sources/TabsterCoreFFI/include/
 .DS_Store
 /.claude/worktrees/
+# Real-world tabs for local testing only (copyrighted, never commit)
+/*.gp
+/*.gpx
+/*.gp[345]
+/testdata/local/
