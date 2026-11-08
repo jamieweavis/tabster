@@ -2,10 +2,7 @@
 
 use std::path::Path;
 
-use crate::model::{Score, TICKS_PER_QUARTER};
-
-/// Used when a score has no usable tempo.
-const DEFAULT_TEMPO: f64 = 120.0;
+use crate::model::Score;
 
 /// What the `tabs` row stores about a score.
 #[derive(Debug, Clone, PartialEq)]
@@ -104,33 +101,7 @@ fn note_name(pitch: u8) -> &'static str {
     NAMES[usize::from(pitch % 12)]
 }
 
-/// A rough length in seconds: every master bar once (repeats ignored) at the initial tempo.
-/// A bar lasts as long as its longest voice in any track, or its time signature if empty.
-// TODO(integration): use `Timeline::new(score).duration_secs()` once the timeline lands.
+/// Length in seconds as played: repeats and jumps unrolled, tempo changes applied.
 pub(super) fn estimate_duration(score: &Score) -> f64 {
-    let tempo = if score.initial_tempo.is_finite() && score.initial_tempo > 0.0 {
-        score.initial_tempo
-    } else {
-        DEFAULT_TEMPO
-    };
-    let ticks: u64 = score
-        .master_bars
-        .iter()
-        .enumerate()
-        .map(|(i, master)| {
-            let played = score
-                .tracks
-                .iter()
-                .filter_map(|t| t.bars.get(i))
-                .map(|b| b.ticks())
-                .max()
-                .unwrap_or(0);
-            u64::from(if played > 0 {
-                played
-            } else {
-                master.time_signature.bar_ticks()
-            })
-        })
-        .sum();
-    ticks as f64 / f64::from(TICKS_PER_QUARTER) * 60.0 / tempo
+    crate::timeline::Timeline::new(score).duration_secs()
 }
