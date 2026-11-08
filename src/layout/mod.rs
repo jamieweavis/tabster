@@ -74,10 +74,10 @@ pub struct Rect {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, uniffi::Enum)]
 pub enum Ink {
-    /// Primary foreground (staff lines, fret numbers).
+    /// Primary foreground (fret numbers, bar lines, rhythm).
     #[default]
     Primary,
-    /// De-emphasised (bar numbers, ghost notes, technique labels).
+    /// De-emphasised (staff lines, bar numbers, ghost notes, technique labels).
     Secondary,
     /// Accent colour (section markers).
     Accent,
