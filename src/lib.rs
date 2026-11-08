@@ -15,6 +15,7 @@ pub mod player_server;
 pub mod sync;
 pub mod timeline;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,8 +26,8 @@ use crate::config::{Config, ConfigSaver};
 use crate::import::ScanIndex;
 use crate::layout::{Cursor, DisplayList, LayoutOptions};
 use crate::library::{
-    FolderWatcher, ImportOutcome, Library, LibraryError, PracticeState, Setlist, TabFilter, TabId,
-    TabSummary, Video, VideoId,
+    FolderWatcher, ImportOutcome, Library, LibraryError, PracticeState, PracticeStats, SavedLoop,
+    Setlist, TabFilter, TabId, TabSummary, Video, VideoId,
 };
 use crate::model::Score;
 use crate::playback::{SynthError, TabSynth};
@@ -275,6 +276,47 @@ impl Core {
 
     pub fn set_practice_state(&self, tab: TabId, state: PracticeState) -> Result<(), CoreError> {
         Ok(self.shared.library.set_practice_state(tab, &state)?)
+    }
+
+    /// The tab's saved loop sections, by start bar.
+    pub fn saved_loops(&self, tab: TabId) -> Result<Vec<SavedLoop>, CoreError> {
+        Ok(self.shared.library.saved_loops(tab)?)
+    }
+
+    /// Save a named loop over master bars `start_bar..=end_bar`; returns its id.
+    pub fn save_loop(
+        &self,
+        tab: TabId,
+        name: String,
+        start_bar: u32,
+        end_bar: u32,
+    ) -> Result<i64, CoreError> {
+        Ok(self
+            .shared
+            .library
+            .save_loop(tab, &name, start_bar, end_bar)?)
+    }
+
+    pub fn delete_loop(&self, id: i64) -> Result<(), CoreError> {
+        Ok(self.shared.library.delete_loop(id)?)
+    }
+
+    pub fn rename_loop(&self, id: i64, name: String) -> Result<(), CoreError> {
+        Ok(self.shared.library.rename_loop(id, &name)?)
+    }
+
+    /// Add `seconds` of playing time to the tab's practice history (today, local time).
+    pub fn record_practice(&self, tab: TabId, seconds: f64) -> Result<(), CoreError> {
+        Ok(self.shared.library.record_practice(tab, seconds)?)
+    }
+
+    pub fn practice_stats(&self, tab: TabId) -> Result<PracticeStats, CoreError> {
+        Ok(self.shared.library.practice_stats(tab)?)
+    }
+
+    /// Total practice seconds per tab (tabs never practised are absent).
+    pub fn practice_totals(&self) -> Result<HashMap<TabId, f64>, CoreError> {
+        Ok(self.shared.library.practice_totals()?)
     }
 
     /// Open a tab for viewing and playback.

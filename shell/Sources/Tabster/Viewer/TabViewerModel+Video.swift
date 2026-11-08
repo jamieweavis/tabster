@@ -149,6 +149,10 @@ extension TabViewerModel {
             player.seek(to: start)
         }
         speed = Self.snap(speed, to: Self.videoSpeeds)
+        if trainer != nil {
+            trainer?.setRates(Self.videoSpeeds)
+            speed = trainer?.speed ?? speed
+        }
         if abs(player.rate - speed) > 0.001 { videoClock.rate = speed }
         if wasPlaying { videoClock.play() }
         refresh(follow: false)
@@ -169,6 +173,10 @@ extension TabViewerModel {
             internalClock = InternalClock()
         }
         speed = Self.snap(speed, to: Self.speeds)
+        if trainer != nil {
+            trainer?.setRates(nil)
+            speed = trainer?.speed ?? speed
+        }
         internalClock.rate = speed
         internalClock.seek(to: score)
         if wasPlaying { internalClock.play() }

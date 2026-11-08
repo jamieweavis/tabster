@@ -119,12 +119,14 @@ pub struct PracticeState {
 }
 
 mod metadata;
+mod practice;
 mod schema;
 #[cfg(test)]
 mod tests;
 pub mod watch;
 mod youtube;
 
+pub use practice::{PracticeStats, SavedLoop};
 pub use watch::FolderWatcher;
 
 impl From<rusqlite::Error> for LibraryError {

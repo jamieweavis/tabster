@@ -17,6 +17,12 @@ import SwiftUI
 /// puts the video beside the tab, and `TABSTER_VIDEO_LOG=<file>` writes every display frame
 /// (host, video and score time, played bar) and raw player sample as JSON lines.
 ///
+/// Practice: `TABSTER_TRAINER=<start>,<step>,<target>[,<passes>]` (percent) starts the speed
+/// trainer on `TABSTER_LOOP` once the clock is ready and logs every pass; `TABSTER_COUNTIN=1`,
+/// `TABSTER_TAB_AUDIO=0|1` (synth or silent internal clock), `TABSTER_PRACTICE_POPOVER=1` opens
+/// the practice popover (snapshotted beside the window), `TABSTER_PRACTICED=<secs>` seeds practice
+/// history and `TABSTER_SAVED_LOOPS=Name:13-16,…` seeds saved loops.
+///
 /// Hook (in `TabsterApp`): `ViewerHarness.debugHarnessIfRequested { ContentView() }`.
 enum ViewerHarness {
     @MainActor @ViewBuilder
@@ -76,12 +82,23 @@ private struct HarnessView: View {
         let videoID = env["TABSTER_VIDEO"]
         let sync = SyncSpec.offset(offsetSecs: env["TABSTER_SYNC_OFFSET"].flatMap(Double.init) ?? 0,
                                    stretch: env["TABSTER_SYNC_STRETCH"].flatMap(Double.init) ?? 1)
+        // Volatile: don't touch the user's saved preferences.
+        var volatile = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+        if let audio = env["TABSTER_TAB_AUDIO"] { volatile["tabAudio"] = audio == "1" }
+        if let countIn = env["TABSTER_COUNTIN"] { volatile["viewer.countIn"] = countIn == "1" }
+        if let trainer = env["TABSTER_TRAINER"] { volatile["viewer.trainer"] = trainer }
+        UserDefaults.standard.setVolatileDomain(volatile, forName: UserDefaults.argumentDomain)
+        let practiced = env["TABSTER_PRACTICED"].flatMap(Double.init)
+        let savedLoops: [(String, UInt32, UInt32)] = (env["TABSTER_SAVED_LOOPS"] ?? "").split(separator: ",").compactMap {
+            let parts = $0.split(separator: ":")
+            let bars = parts.last?.split(separator: "-").compactMap { UInt32($0) } ?? []
+            guard parts.count == 2, bars.count == 2, bars[0] >= 1, bars[1] >= 1 else { return nil }
+            return (String(parts[0]), bars[0] - 1, bars[1] - 1)
+        }
         if videoID != nil {
-            // Volatile: don't touch the user's saved preferences.
-            UserDefaults.standard.setVolatileDomain([
-                TabViewerModel.showVideoKey: true,
-                "viewer.videoPlacement": env["TABSTER_VIDEO_PLACEMENT"] ?? "top",
-            ], forName: UserDefaults.argumentDomain)
+            volatile[TabViewerModel.showVideoKey] = true
+            volatile["viewer.videoPlacement"] = env["TABSTER_VIDEO_PLACEMENT"] ?? "top"
+            UserDefaults.standard.setVolatileDomain(volatile, forName: UserDefaults.argumentDomain)
             // WebKit throttles an occluded page's timers (and so the player's samples).
             NSApp.windows.first?.level = .floating
         }
@@ -104,6 +121,10 @@ private struct HarnessView: View {
                 }
                 if state.speed <= 0 { state.speed = 1 }
                 try core.setPracticeState(tab: id, state: state)
+                if let practiced { try core.recordPractice(tab: id, seconds: practiced) }
+                for (name, start, end) in savedLoops {
+                    _ = try core.saveLoop(tab: id, name: name, startBar: start, endBar: end)
+                }
                 if let videoID {
                     let video = try core.addVideo(tab: id, urlOrId: videoID, label: "Original")
                     try core.setDefaultVideo(id: video)
@@ -132,6 +153,14 @@ private struct HarnessView: View {
             self.model = model
             if env["TABSTER_SCROLLTEST"] == "1" { scheduleScrollTest() }
             if env["TABSTER_SELFTEST"] == "1" { scheduleSelfTest(model) }
+            if env["TABSTER_TRAINER"] != nil { scheduleTrainer(model) }
+            if env["TABSTER_PRACTICE_POPOVER"] == "1" {
+                Task {
+                    while model.info == nil { try? await Task.sleep(for: .milliseconds(50)) }
+                    try? await Task.sleep(for: .milliseconds(600))
+                    model.showPractice = true
+                }
+            }
             if let snapshot = env["TABSTER_VIEW_SNAPSHOT"] { scheduleSnapshot(to: snapshot) }
             // Measure steady-state playback, not the open/first-layout frames.
             Task {
@@ -181,6 +210,34 @@ private struct HarnessView: View {
             state("played 1s at 50%")
             model.pause()
             model.setSpeed(1)
+        }
+    }
+
+    /// Starts the speed trainer once the clock is ready and logs every counted pass.
+    private func scheduleTrainer(_ model: TabViewerModel) {
+        Task {
+            while model.info == nil || !model.hasLayout { try? await Task.sleep(for: .milliseconds(50)) }
+            // Give the synth (if wanted) a moment to load and become the clock.
+            let deadline = CACurrentMediaTime() + 5
+            while model.tabAudio, !model.synthAvailable, CACurrentMediaTime() < deadline {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            let clockName = String(describing: type(of: model.clock))
+            let started = CACurrentMediaTime()
+            model.trainerObserver = { trainer, event in
+                report(String(format: "trainer t=%6.2fs pass %2d (%@): %@ → speed %@, clock rate %.3f, score %.2fs",
+                              CACurrentMediaTime() - started, trainer.totalPasses, clockName, "\(event)",
+                              TabViewer.percent(trainer.speed), model.clock.rate, model.currentTime))
+            }
+            model.startTrainer()
+            if let trainer = model.trainer, let span = model.loopSpan {
+                report(String(format: "trainer start on %@ (%@, count-in %d): loop %.2f–%.2fs, schedule %@",
+                              model.loop.map(TabViewer.loopLabel) ?? "-", clockName, model.countIn ? 1 : 0,
+                              span.lowerBound, span.upperBound,
+                              trainer.schedule.map { TabViewer.percent($0) }.joined(separator: " ")))
+            } else {
+                report("trainer: no loop (set TABSTER_LOOP)")
+            }
         }
     }
 
@@ -236,6 +293,14 @@ private struct HarnessView: View {
             if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                 view.cacheDisplay(in: view.bounds, to: rep)
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+            }
+            for (i, other) in NSApp.windows.enumerated() where other !== window && other.isVisible {
+                guard let content = other.contentView?.superview ?? other.contentView,
+                      content.bounds.width > 40,
+                      let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { continue }
+                content.cacheDisplay(in: content.bounds, to: rep)
+                let extra = path.replacingOccurrences(of: ".png", with: "-window\(i).png")
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: extra))
             }
             report(String(format: "open %.1f ms, first layout applied %.1f ms, first render %.1f ms (from model init)",
                           ViewerMetrics.openMs ?? -1, ViewerMetrics.firstLayoutMs ?? -1, ViewerMetrics.firstRenderMs ?? -1))

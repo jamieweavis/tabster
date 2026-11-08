@@ -9,6 +9,7 @@ struct TabViewer: View {
     @State private var model: TabViewerModel
     /// Where the video sits: "top" or "right" (remembered for the app).
     @AppStorage("viewer.videoPlacement") private var videoPlacement = "top"
+    @State private var loopPrompt: LoopPrompt?
 
     init(core: Core, tabID: Int64) {
         self.core = core
@@ -70,7 +71,8 @@ struct TabViewer: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .navigationTitle(model.info?.title ?? "")
         .navigationSubtitle(model.info?.artist ?? "")
-        .toolbar { ViewerToolbar(model: model, videoPlacement: $videoPlacement) }
+        .toolbar { ViewerToolbar(model: model, videoPlacement: $videoPlacement, loopPrompt: $loopPrompt) }
+        .modifier(LoopPromptModifier(model: model, prompt: $loopPrompt))
         .sheet(isPresented: Binding(get: { model.showAttachSheet }, set: { model.showAttachSheet = $0 })) {
             VideoAttachSheet(onAttach: { id, label in model.addVideo(youtubeID: id, label: label) })
         }
@@ -102,6 +104,7 @@ struct TabViewer: View {
 private struct ViewerToolbar: ToolbarContent {
     let model: TabViewerModel
     @Binding var videoPlacement: String
+    @Binding var loopPrompt: LoopPrompt?
 
     var body: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
@@ -134,6 +137,11 @@ private struct ViewerToolbar: ToolbarContent {
                 }
                 .tint(.orange)
                 .help("Looping — click (or press \\) to clear")
+            }
+
+            if model.info != nil {
+                LoopsMenu(model: model, prompt: $loopPrompt)
+                PracticeButton(model: model)
             }
 
             HStack {
@@ -254,17 +262,29 @@ private struct TransportBar: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 44, alignment: .leading)
 
+            if let summary = model.practiceSummary {
+                Label(summary, systemImage: "clock")
+                    .labelStyle(.titleAndIcon)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .help("Time spent playing this tab")
+            }
+
             if let sections = model.info?.sections, !sections.isEmpty {
                 Menu {
                     ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
                         Button("\(section.label)  (bar \(section.masterBar + 1))") { model.seek(to: section.scoreSecs) }
                     }
+                    Divider()
+                    Button("Loop Section", systemImage: "repeat") { model.loopCurrentSection() }
                 } label: {
                     Label("Sections", systemImage: "list.bullet")
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .help("Jump to section")
+                .help("Jump to or loop a section")
             }
         }
         .padding(.horizontal, 12)
