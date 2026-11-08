@@ -14,8 +14,9 @@ import SwiftUI
 /// Video: `TABSTER_VIDEO=<YouTube id>` attaches the video (muted unless `TABSTER_VIDEO_MUTE=0`)
 /// with `TABSTER_SYNC_OFFSET=<secs>` / `TABSTER_SYNC_STRETCH=<x>`; `TABSTER_SYNC_PANEL=1` opens
 /// the sync editor (`TABSTER_SYNC_PERBAR=1` in per-bar mode), `TABSTER_VIDEO_PLACEMENT=right`
-/// puts the video beside the tab, and `TABSTER_VIDEO_LOG=<file>` writes every display frame
-/// (host, video and score time, played bar) and raw player sample as JSON lines.
+/// puts the video beside the tab, `TABSTER_VIDEO_HIDDEN=1` hides its pane (it still plays), and
+/// `TABSTER_VIDEO_LOG=<file>` writes every display frame (host, video and score time, played bar)
+/// and raw player sample as JSON lines.
 ///
 /// Practice: `TABSTER_TRAINER=<start>,<step>,<target>[,<passes>]` (percent) starts the speed
 /// trainer on `TABSTER_LOOP` once the clock is ready and logs every pass; `TABSTER_COUNTIN=1`,
@@ -96,7 +97,7 @@ private struct HarnessView: View {
             return (String(parts[0]), bars[0] - 1, bars[1] - 1)
         }
         if videoID != nil {
-            volatile[TabViewerModel.showVideoKey] = true
+            volatile[TabViewerModel.showVideoKey] = env["TABSTER_VIDEO_HIDDEN"] != "1"
             volatile["viewer.videoPlacement"] = env["TABSTER_VIDEO_PLACEMENT"] ?? "top"
             UserDefaults.standard.setVolatileDomain(volatile, forName: UserDefaults.argumentDomain)
             // WebKit throttles an occluded page's timers (and so the player's samples).

@@ -46,6 +46,17 @@ struct TabViewer: View {
                     }
                 } else {
                     canvas
+                        .background {
+                            // The hidden video keeps playing (the music source): its web view
+                            // stays in the window, full size but invisible, behind the tab.
+                            if model.selectedVideo != nil, let player = model.player {
+                                YouTubePlayerView(controller: player)
+                                    .frame(width: 356, height: 200)
+                                    .opacity(0)
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
+                            }
+                        }
                 }
                 Divider()
                 TransportBar(model: model)
@@ -222,7 +233,7 @@ private struct ViewerToolbar: ToolbarContent {
                 } primaryAction: {
                     model.setVideoVisible(!model.showVideo)
                 }
-                .help("Show or hide the video (click), choose a video (hold)")
+                .help("Show or hide the video — hidden, its audio keeps playing (click); choose a video (hold)")
             }
         }
     }

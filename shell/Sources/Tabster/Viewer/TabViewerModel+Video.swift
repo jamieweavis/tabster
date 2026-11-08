@@ -5,10 +5,10 @@ import TabsterKit
 /// The video side of the viewer: which video plays, which clock drives the cursor, and the sync
 /// editor's actions.
 ///
-/// While a video is shown and healthy, YouTube is the clock (`VideoPlaybackClock`, in video
-/// seconds) and every score ↔ media conversion goes through the session's sync map. With no
-/// video, the pane hidden, or a player failure, the `InternalClock` (score seconds) takes over
-/// at the same score position.
+/// While a video is selected and healthy, YouTube is the clock (`VideoPlaybackClock`, in video
+/// seconds) and every score ↔ media conversion goes through the session's sync map — whether or
+/// not its pane is shown (hidden, it still plays: the music without the picture). With no video
+/// or a player failure, the `InternalClock` (score seconds) takes over at the same score position.
 extension TabViewerModel {
     static let showVideoKey = "viewer.showVideo"
 
@@ -25,13 +25,13 @@ extension TabViewerModel {
         }
     }
 
-    /// Show or hide the video pane (remembered for the app). Hidden means no video playback.
+    /// Show or hide the video pane (remembered for the app). A hidden video keeps playing as the
+    /// clock and audio source; only the picture goes.
     func setVideoVisible(_ visible: Bool) {
         UserDefaults.standard.set(visible, forKey: Self.showVideoKey)
         guard visible != showVideo else { return }
         showVideo = visible
         if !visible { syncEditing = false }
-        updateClockSource()
     }
 
     func select(_ video: Video) {
@@ -109,9 +109,9 @@ extension TabViewerModel {
 
     // MARK: - Clock source
 
-    /// YouTube drives playback when a video is selected, shown, and hasn't failed.
+    /// YouTube drives playback when a video is selected and hasn't failed (shown or not).
     private var wantsVideoClock: Bool {
-        showVideo && selectedVideo != nil && player?.failure == nil
+        selectedVideo != nil && player?.failure == nil
     }
 
     func updateClockSource() {
