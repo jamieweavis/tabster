@@ -32,7 +32,7 @@ build: bindings
     swift build --package-path shell -c {{config}} -Xlinker -L{{rust_out}}
 
 # Assemble and sign build/Tabster.app
-app: build
+app: build soundfont
     rm -rf {{app}}
     mkdir -p {{app}}/Contents/MacOS {{app}}/Contents/Resources
     cp Resources/Info.plist {{app}}/Contents/
