@@ -13,12 +13,6 @@ final class AppModel {
 
     // MARK: Library state
 
-    /// What the sidebar shows; changing it reloads the table.
-    var sidebar: SidebarItem = .all {
-        didSet {
-            if sidebar != oldValue { reloadTabs() }
-        }
-    }
     /// The search field's text. The table follows it after a short pause.
     var searchText = "" {
         didSet {
@@ -33,7 +27,6 @@ final class AppModel {
     }
     private(set) var tabs: [TabSummary] = []
     private(set) var tags: [String] = []
-    private(set) var setlists: [Setlist] = []
     var selection: Int64?
 
     // MARK: Import state
@@ -80,15 +73,7 @@ final class AppModel {
     }
 
     var filter: TabFilter {
-        var filter = TabFilter(query: query, favouritesOnly: false, tag: nil, setlist: nil, sort: sort)
-        switch sidebar {
-        case .all: break
-        case .recent: filter.sort = .recentlyOpened
-        case .favourites: filter.favouritesOnly = true
-        case .tag(let tag): filter.tag = tag
-        case .setlist(let id): filter.setlist = id
-        }
-        return filter
+        TabFilter(query: query, favouritesOnly: false, tag: nil, setlist: nil, sort: sort)
     }
 
     var selectedTab: TabSummary? {
@@ -105,15 +90,8 @@ final class AppModel {
         guard let core else { return }
         do {
             tags = try core.tags()
-            setlists = try core.setlists()
         } catch {
-            Logger.library.error("couldn't load tags/setlists: \(error, privacy: .public)")
-        }
-        // A tag or setlist that no longer exists can't stay selected.
-        switch sidebar {
-        case .tag(let tag) where !tags.contains(tag): sidebar = .all
-        case .setlist(let id) where !setlists.contains(where: { $0.id == id }): sidebar = .all
-        default: break
+            Logger.library.error("couldn't load tags: \(error, privacy: .public)")
         }
         reloadTabs()
     }
@@ -122,7 +100,6 @@ final class AppModel {
     func reloadTabs() {
         guard let core else { return }
         let filter = filter
-        let recentOnly = sidebar == .recent
         reloadGeneration += 1
         let generation = reloadGeneration
         Task {
@@ -130,7 +107,7 @@ final class AppModel {
             guard generation == reloadGeneration else { return }
             switch result {
             case .success(let list):
-                tabs = recentOnly ? list.filter { $0.lastOpenedAt != nil } : list
+                tabs = list
             case .failure(let error):
                 Logger.library.error("couldn't list tabs: \(error, privacy: .public)")
                 errorMessage = error.userMessage
@@ -169,10 +146,7 @@ final class AppModel {
             importFailures = failures
             if select, let id = outcomes.lazy.compactMap(\.id).first {
                 // The tab must be in the table to be selected.
-                if !tabs.contains(where: { $0.id == id }) {
-                    sidebar = .all
-                    searchText = ""
-                }
+                if !tabs.contains(where: { $0.id == id }) { searchText = "" }
                 selection = id
             }
         }
@@ -213,48 +187,6 @@ final class AppModel {
         }
     }
 
-    // MARK: Setlists
-
-    @discardableResult
-    func createSetlist(named name: String) -> Int64? {
-        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return nil }
-        var id: Int64?
-        perform { core in id = try core.createSetlist(name: name) }
-        return id
-    }
-
-    func renameSetlist(_ setlist: Setlist, to name: String) {
-        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name != setlist.name else { return }
-        perform { core in try core.renameSetlist(id: setlist.id, name: name) }
-    }
-
-    func deleteSetlist(_ id: Int64) {
-        perform { core in try core.deleteSetlist(id: id) }
-    }
-
-    func add(_ ids: Set<Int64>, toSetlist setlist: Int64) {
-        perform { core in
-            var tabs = try setlistTabs(core, setlist)
-            // Keep the table's order for the new tabs.
-            tabs += self.tabs.map(\.id).filter { ids.contains($0) && !tabs.contains($0) }
-            try core.setSetlistTabs(id: setlist, tabs: tabs)
-        }
-    }
-
-    func remove(_ ids: Set<Int64>, fromSetlist setlist: Int64) {
-        perform { core in
-            let tabs = try setlistTabs(core, setlist).filter { !ids.contains($0) }
-            try core.setSetlistTabs(id: setlist, tabs: tabs)
-        }
-    }
-
-    private func setlistTabs(_ core: Core, _ setlist: Int64) throws -> [Int64] {
-        let filter = TabFilter(query: "", favouritesOnly: false, tag: nil, setlist: setlist, sort: .title)
-        return try core.listTabs(filter: filter).map(\.id)
-    }
-
     // MARK: Settings
 
     func updateConfig(_ config: Config) {
@@ -273,14 +205,6 @@ final class AppModel {
             errorMessage = error.userMessage
         }
     }
-}
-
-enum SidebarItem: Hashable {
-    case all
-    case recent
-    case favourites
-    case tag(String)
-    case setlist(Int64)
 }
 
 struct ImportProgress: Equatable {

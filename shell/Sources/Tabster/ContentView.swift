@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The main window: library sidebar, tab table, and the open tab.
+/// The main window: tab table, and the open tab.
 struct ContentView: View {
     @Environment(AppModel.self) private var model
 
@@ -25,20 +25,15 @@ struct ContentView: View {
 struct LibraryView: View {
     let core: Core
     @Environment(AppModel.self) private var model
-    @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var isDropTargeted = false
-    @FocusState private var searchFocused: Bool
+    /// Whether the tab list is shown beside the viewer (the toolbar's sidebar button).
+    @State private var columnVisibility = NavigationSplitViewVisibility.all
 
     var body: some View {
         @Bindable var model = model
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            LibrarySidebar()
-                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
-        } content: {
             TabTable()
-                .searchable(text: $model.searchText, prompt: "Title, artist or album")
-                .searchFocused($searchFocused)
-                .navigationSplitViewColumnWidth(min: 480, ideal: 600)
+                .navigationSplitViewColumnWidth(min: 240, ideal: 600)
         } detail: {
             if let id = model.selection {
                 TabViewer(core: core, tabID: id)
@@ -49,6 +44,8 @@ struct LibraryView: View {
                     systemImage: "music.note.list",
                     description: Text("Choose a tab from the library to open it.")
                 )
+                // "Tabster" already heads the table column.
+                .navigationTitle("")
             }
         }
         .toolbar {
@@ -71,7 +68,6 @@ struct LibraryView: View {
                     .allowsHitTesting(false)
             }
         }
-        .onChange(of: model.searchFocusRequest) { searchFocused = true }
         .sheet(isPresented: Binding(
             get: { !model.importFailures.isEmpty },
             set: { if !$0 { model.importFailures = [] } }
