@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<GPIF>
+<GPVersion>6.0</GPVersion>
+<Score>
+<Title><![CDATA[Tabster GPX fixture]]></Title>
+<SubTitle><![CDATA[]]></SubTitle>
+<Artist><![CDATA[Tabster]]></Artist>
+<Album><![CDATA[]]></Album>
+<Words><![CDATA[]]></Words>
+<Music><![CDATA[]]></Music>
+<Tabber><![CDATA[Tabster tests]]></Tabber>
+</Score>
+<MasterTrack>
+<Tracks>0</Tracks>
+<Automations>
+<Automation><Type>Tempo</Type><Linear>false</Linear><Bar>0</Bar><Position>0</Position><Visible>true</Visible><Value>120 2</Value></Automation>
+</Automations>
+</MasterTrack>
+<Tracks>
+<Track id="0">
+<Name><![CDATA[Guitar]]></Name>
+<ShortName><![CDATA[gtr]]></ShortName>
+<GeneralMidi table="Instrument"><Program>25</Program><Port>0</Port><PrimaryChannel>0</PrimaryChannel><SecondaryChannel>1</SecondaryChannel><ForeOneChannelPerString>false</ForeOneChannelPerString></GeneralMidi>
+<Properties>
+<Property name="Tuning"><Pitches>40 45 50 55 59 64</Pitches></Property>
+<Property name="CapoFret"><Fret>0</Fret></Property>
+</Properties>
+</Track>
+</Tracks>
+<MasterBars>
+<MasterBar><Key><AccidentalCount>0</AccidentalCount><Mode>Major</Mode></Key><Time>4/4</Time><Bars>0</Bars></MasterBar>
+<MasterBar><Key><AccidentalCount>0</AccidentalCount><Mode>Major</Mode></Key><Time>4/4</Time><Bars>1</Bars></MasterBar>
+</MasterBars>
+<Bars>
+<Bar id="0"><Clef>G2</Clef><Voices>0 -1 -1 -1</Voices></Bar>
+<Bar id="1"><Clef>G2</Clef><Voices>1 -1 -1 -1</Voices></Bar>
+</Bars>
+<Voices>
+<Voice id="0"><Beats>0 1 2 3</Beats></Voice>
+<Voice id="1"><Beats>4</Beats></Voice>
+</Voices>
+<Beats>
+<Beat id="0"><Rhythm ref="0"/><Notes>0</Notes></Beat>
+<Beat id="1"><Rhythm ref="0"/><Notes>1</Notes></Beat>
+<Beat id="2"><Rhythm ref="0"/><Notes>2</Notes></Beat>
+<Beat id="3"><Rhythm ref="0"/></Beat>
+<Beat id="4"><Rhythm ref="1"/><Notes>3</Notes></Beat>
+</Beats>
+<Notes>
+<Note id="0"><Properties><Property name="String"><String>0</String></Property><Property name="Fret"><Fret>3</Fret></Property></Properties></Note>
+<Note id="1"><Properties><Property name="String"><String>1</String></Property><Property name="Fret"><Fret>2</Fret></Property></Properties></Note>
+<Note id="2"><Properties><Property name="String"><String>2</String></Property><Property name="Fret"><Fret>0</Fret></Property></Properties></Note>
+<Note id="3"><Properties><Property name="String"><String>5</String></Property><Property name="Fret"><Fret>0</Fret></Property></Properties></Note>
+</Notes>
+<Rhythms>
+<Rhythm id="0"><NoteValue>Quarter</NoteValue></Rhythm>
+<Rhythm id="1"><NoteValue>Whole</NoteValue></Rhythm>
+</Rhythms>
+</GPIF>
