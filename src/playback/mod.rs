@@ -22,7 +22,10 @@ use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
 use crate::model::Score;
 use crate::timeline::Timeline;
-pub use engine::{Engine, SAMPLE_RATE, Sink};
+pub use engine::{
+    Engine, MAX_METRONOME_VOLUME, MAX_TAB_VOLUME, METRONOME_PITCH_RANGE, SAMPLE_RATE, Sink,
+};
+pub use events::{MetronomeSound, TabKit};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SynthError {
@@ -133,6 +136,39 @@ impl TabSynth {
     /// Click on every beat of the time signature (accent on beat 1).
     pub fn set_metronome(&self, enabled: bool) {
         self.engine.lock().set_metronome(enabled);
+    }
+
+    /// The set of guitars, basses and drums the tab plays with.
+    pub fn set_kit(&self, kit: TabKit) {
+        self.engine.lock().set_kit(kit);
+    }
+
+    /// Loudness of the tab's notes (not the metronome): an amplitude factor of the default,
+    /// 0–1.5 ([`MAX_TAB_VOLUME`]).
+    pub fn set_tab_volume(&self, volume: f32) {
+        self.engine.lock().set_tab_volume(volume);
+    }
+
+    /// What the metronome and count-in click with.
+    pub fn set_metronome_sound(&self, sound: MetronomeSound) {
+        self.engine.lock().set_metronome_sound(sound);
+    }
+
+    /// Metronome and count-in loudness: an amplitude factor of the default click, 0–3
+    /// ([`MAX_METRONOME_VOLUME`]), on top of the master volume (`set_volume`).
+    pub fn set_metronome_volume(&self, volume: f32) {
+        self.engine.lock().set_metronome_volume(volume);
+    }
+
+    /// Shift the metronome's pitch, in semitones (−12…12).
+    pub fn set_metronome_pitch(&self, semitones: f32) {
+        self.engine.lock().set_metronome_pitch(semitones);
+    }
+
+    /// Sound one accented click right away (playing or not), to audition the metronome
+    /// settings. Audible only while the shell is pulling audio.
+    pub fn preview_click(&self) {
+        self.engine.lock().preview_click();
     }
 
     /// Click `bars` bars (time signature and tempo at the current position) before the score

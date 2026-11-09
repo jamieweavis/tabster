@@ -2,7 +2,10 @@ use std::path::Path;
 
 use super::TabSynth;
 use super::engine::{Engine, SAMPLE_RATE, Sink};
-use super::events::{self, CLICK_ACCENT_KEY, CLICK_KEY, Event, PERCUSSION_CHANNEL};
+use super::events::{
+    self, CLICK_ACCENT_KEY, CLICK_KEY, Event, METRONOME_CHANNEL, MetronomeSound,
+    PERCUSSION_CHANNEL, TabKit,
+};
 use crate::model::{
     Bar, Beat, Duration, MasterBar, Note, NoteEffects, Score, Track, TripletFeel, Voice,
 };
@@ -14,6 +17,8 @@ enum Msg {
     Off(u8, u8),
     AllOff(bool),
     ChannelOff(u8),
+    Cc(u8, u8, u8),
+    Bend(u8, u16),
 }
 
 /// Records messages with the frame they arrived at.
@@ -49,6 +54,13 @@ impl Sink for Recorder {
         self.log.push((self.frame, Msg::ChannelOff(channel)));
     }
     fn program_change(&mut self, _: u8, _: u8) {}
+    fn control_change(&mut self, channel: u8, controller: u8, value: u8) {
+        self.log
+            .push((self.frame, Msg::Cc(channel, controller, value)));
+    }
+    fn pitch_bend(&mut self, channel: u8, value: u16) {
+        self.log.push((self.frame, Msg::Bend(channel, value)));
+    }
     fn set_volume(&mut self, _: f32) {}
     fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
         left.fill(0.0);
@@ -458,7 +470,7 @@ fn metronome_and_count_in() {
         .sink()
         .ons()
         .iter()
-        .filter(|o| o.1 == PERCUSSION_CHANNEL)
+        .filter(|o| o.1 == METRONOME_CHANNEL)
         .map(|o| (o.0, o.2))
         .collect();
     let sec = SAMPLE_RATE as usize;
@@ -491,15 +503,101 @@ fn notes_muted_leaves_only_the_metronome() {
     assert_eq!(
         ons.iter().map(|o| (o.0, o.1, o.2)).collect::<Vec<_>>(),
         [
-            (0, PERCUSSION_CHANNEL, CLICK_ACCENT_KEY),
-            (sec / 2, PERCUSSION_CHANNEL, CLICK_KEY),
-            (sec, PERCUSSION_CHANNEL, CLICK_KEY),
+            (0, METRONOME_CHANNEL, CLICK_ACCENT_KEY),
+            (sec / 2, METRONOME_CHANNEL, CLICK_KEY),
+            (sec, METRONOME_CHANNEL, CLICK_KEY),
         ]
     );
     // Unmuting brings the notes back from the next one due.
     e.set_notes_muted(false);
     render_secs(&mut e, 0.5);
     assert!(e.sink().ons().iter().any(|o| o.1 == 0 && o.2 == 69));
+}
+
+#[test]
+fn metronome_sound_volume_and_pitch() {
+    let mut e = engine(&four_quarters());
+    // Set up as a drum kit with a ±12 semitone bend range.
+    assert!(
+        e.sink()
+            .log
+            .contains(&(0, Msg::Cc(METRONOME_CHANNEL, 0x00, 128)))
+    );
+    assert!(
+        e.sink()
+            .log
+            .contains(&(0, Msg::Cc(METRONOME_CHANNEL, 0x06, 12)))
+    );
+    e.set_metronome(true);
+    e.set_notes_muted(true);
+    e.set_metronome_sound(MetronomeSound::Cowbell);
+    assert!(
+        e.sink()
+            .log
+            .contains(&(0, Msg::ChannelOff(METRONOME_CHANNEL)))
+    );
+    e.set_metronome_volume(0.25);
+    assert!(
+        e.sink()
+            .log
+            .contains(&(0, Msg::Cc(METRONOME_CHANNEL, 0x07, 50)))
+    );
+    e.set_metronome_volume(f32::NAN);
+    assert!(
+        e.sink()
+            .log
+            .contains(&(0, Msg::Cc(METRONOME_CHANNEL, 0x07, 100)))
+    );
+    e.set_metronome_pitch(6.0);
+    e.set_metronome_pitch(-40.0);
+    assert!(
+        e.sink()
+            .log
+            .contains(&(0, Msg::Bend(METRONOME_CHANNEL, 12288)))
+    );
+    assert!(e.sink().log.contains(&(0, Msg::Bend(METRONOME_CHANNEL, 0))));
+    e.count_in(1);
+    e.set_playing(true);
+    render_secs(&mut e, 2.2);
+    let keys: Vec<u8> = e.sink().ons().iter().map(|o| o.2).collect();
+    assert_eq!(keys, [56; 5]);
+    // Note-offs go to the sound's keys too.
+    assert!(
+        e.sink()
+            .log
+            .iter()
+            .all(|(_, m)| !matches!(m, Msg::Off(_, CLICK_ACCENT_KEY | CLICK_KEY)))
+    );
+}
+
+#[test]
+fn loud_metronome_doubles_each_click() {
+    let mut e = engine(&four_quarters());
+    e.set_metronome_volume(2.0);
+    // Two voices, each at the default channel volume.
+    assert_eq!(
+        e.sink().log.last(),
+        Some(&(0, Msg::Cc(METRONOME_CHANNEL, 0x07, 100)))
+    );
+    e.preview_click();
+    assert_eq!(
+        e.sink().ons(),
+        [(0, METRONOME_CHANNEL, 76), (0, METRONOME_CHANNEL, 76)]
+    );
+    e.set_metronome_volume(9.0);
+    assert_eq!(
+        e.sink().log.last(),
+        Some(&(0, Msg::Cc(METRONOME_CHANNEL, 0x07, 122)))
+    );
+}
+
+#[test]
+fn preview_click_sounds_while_paused() {
+    let mut e = engine(&four_quarters());
+    e.set_metronome_sound(MetronomeSound::Stick);
+    e.preview_click();
+    assert_eq!(e.sink().ons(), [(0, METRONOME_CHANNEL, 37)]);
+    assert!(approx(e.position_secs(), 0.0));
 }
 
 #[test]
@@ -543,4 +641,78 @@ fn renders_audio_with_the_bundled_soundfont() {
     assert!(peak > 0.01 && peak < 1.0, "peak {peak}");
     assert!(rms > 0.001, "rms {rms}");
     assert!(approx(synth.position_secs(), 1.0));
+}
+
+#[test]
+#[ignore]
+fn metronome_sounds_render_with_the_bundled_soundfont() {
+    let s = four_quarters();
+    for sound in [
+        MetronomeSound::WoodBlock,
+        MetronomeSound::Cowbell,
+        MetronomeSound::Stick,
+    ] {
+        let synth = TabSynth::new(&s, &Timeline::new(&s), &bundled_soundfont()).unwrap();
+        synth.set_notes_muted(true);
+        synth.set_metronome_sound(sound);
+        let peak = |audio: &[f32]| audio.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        synth.preview_click();
+        let loud = peak(&synth.render(SAMPLE_RATE / 4));
+        assert!(loud > 0.01, "{sound:?}: peak {loud}");
+        synth.set_metronome_volume(3.0);
+        synth.preview_click();
+        let max = peak(&synth.render(SAMPLE_RATE / 4));
+        println!("{sound:?}: default peak {loud:.3}, max peak {max:.3}");
+        assert!(
+            max > loud * 2.5 && max < 1.0,
+            "{sound:?}: max peak {max} vs {loud}"
+        );
+        synth.set_metronome_volume(0.0);
+        synth.preview_click();
+        let silent = peak(&synth.render(SAMPLE_RATE / 4)[(SAMPLE_RATE / 8) as usize..]);
+        assert!(silent < loud / 4.0, "{sound:?}: muted peak {silent}");
+    }
+}
+
+#[test]
+fn kits_swap_guitars_basses_and_drums() {
+    assert_eq!(TabKit::Standard.program(29), 29);
+    assert_eq!(TabKit::Rock.program(25), 30);
+    assert_eq!(TabKit::Rock.program(33), 34);
+    assert_eq!(TabKit::Acoustic.program(30), 25);
+    assert_eq!(TabKit::Acoustic.program(24), 24);
+    assert_eq!(TabKit::Acoustic.program(36), 32);
+    // Not a guitar or bass: left alone.
+    assert_eq!(TabKit::Rock.program(0), 0);
+    assert_eq!(TabKit::Acoustic.program(73), 73);
+}
+
+#[test]
+fn tab_volume_spares_the_metronome_channel() {
+    let mut e = engine(&four_quarters());
+    let before = e.sink().log.len();
+    e.set_tab_volume(0.25);
+    let ccs: Vec<u8> = e.sink().log[before..]
+        .iter()
+        .filter_map(|(_, m)| match *m {
+            Msg::Cc(ch, 0x07, 50) => Some(ch),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ccs.len(), 15);
+    assert!(!ccs.contains(&METRONOME_CHANNEL));
+}
+
+#[test]
+#[ignore]
+fn kits_render_with_the_bundled_soundfont() {
+    let s = four_quarters();
+    for kit in [TabKit::Standard, TabKit::Rock, TabKit::Acoustic] {
+        let synth = TabSynth::new(&s, &Timeline::new(&s), &bundled_soundfont()).unwrap();
+        synth.set_kit(kit);
+        synth.set_playing(true);
+        let audio = synth.render(SAMPLE_RATE / 2);
+        let peak = audio.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak > 0.01 && peak < 1.0, "{kit:?}: peak {peak}");
+    }
 }

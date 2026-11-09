@@ -6,7 +6,8 @@
 //! internal block boundaries, so audible timing is within ~1.5 ms.)
 
 use super::events::{
-    CLICK_ACCENT_KEY, CLICK_KEY, Event, Events, METRONOME_TRACK, PERCUSSION_CHANNEL,
+    CLICK_ACCENT_KEY, Event, Events, METRONOME_CHANNEL, METRONOME_TRACK, MetronomeSound,
+    PERCUSSION_CHANNEL, TabKit,
 };
 
 pub const SAMPLE_RATE: u32 = 44_100;
@@ -24,6 +25,9 @@ pub trait Sink {
     fn all_notes_off(&mut self, immediate: bool);
     fn channel_notes_off(&mut self, channel: u8);
     fn program_change(&mut self, channel: u8, program: u8);
+    fn control_change(&mut self, channel: u8, controller: u8, value: u8);
+    /// 14-bit pitch bend, 8192 = none.
+    fn pitch_bend(&mut self, channel: u8, value: u16);
     fn set_volume(&mut self, volume: f32);
     fn render(&mut self, left: &mut [f32], right: &mut [f32]);
 }
@@ -44,6 +48,13 @@ impl Sink for rustysynth::Synthesizer {
     fn program_change(&mut self, channel: u8, program: u8) {
         self.process_midi_message(channel.into(), 0xC0, program.into(), 0);
     }
+    fn control_change(&mut self, channel: u8, controller: u8, value: u8) {
+        self.process_midi_message(channel.into(), 0xB0, controller.into(), value.into());
+    }
+    fn pitch_bend(&mut self, channel: u8, value: u16) {
+        let v = i32::from(value.min(0x3FFF));
+        self.process_midi_message(channel.into(), 0xE0, v & 0x7F, v >> 7);
+    }
     fn set_volume(&mut self, volume: f32) {
         self.set_master_volume(volume);
     }
@@ -54,6 +65,14 @@ impl Sink for rustysynth::Synthesizer {
 
 /// Master volume at `set_volume(1.0)`: leaves headroom for dense mixes.
 const BASE_VOLUME: f32 = 0.7;
+/// Metronome pitch range either way, in semitones (the channel's pitch-bend range).
+pub const METRONOME_PITCH_RANGE: f32 = 12.0;
+/// Loudest tab volume: 1.5× the default (CC 7 ≈ 122).
+pub const MAX_TAB_VOLUME: f32 = 1.5;
+/// Loudest metronome volume: 3× (≈ +10 dB) the default click.
+pub const MAX_METRONOME_VOLUME: f32 = 3.0;
+/// Channel volume (CC 7) of the default click and tab: MIDI's default.
+const METRONOME_CC_VOLUME: f32 = 100.0;
 
 #[derive(Debug, Clone, Copy)]
 struct CountIn {
@@ -83,6 +102,10 @@ pub struct Engine<S: Sink> {
     speed: f64,
     playing: bool,
     metronome: bool,
+    metronome_sound: MetronomeSound,
+    kit: TabKit,
+    /// Identical voices per click: 2 doubles its amplitude, past what channel volume allows.
+    metronome_layers: u8,
     /// Every track silent (only the metronome and count-in sound), e.g. over a video's audio.
     notes_muted: bool,
     muted: Vec<bool>,
@@ -99,6 +122,16 @@ impl<S: Sink> Engine<S> {
             sink.program_change(channel, program);
         }
         sink.set_volume(BASE_VOLUME);
+        // The metronome channel plays the drum kit (bank 128), with a pitch-bend range of
+        // ±METRONOME_PITCH_RANGE semitones (RPN 0).
+        sink.control_change(METRONOME_CHANNEL, 0x00, 128);
+        sink.control_change(METRONOME_CHANNEL, 0x65, 0);
+        sink.control_change(METRONOME_CHANNEL, 0x64, 0);
+        sink.control_change(METRONOME_CHANNEL, 0x06, METRONOME_PITCH_RANGE as u8);
+        sink.control_change(METRONOME_CHANNEL, 0x26, 0);
+        sink.control_change(METRONOME_CHANNEL, 0x65, 127);
+        sink.control_change(METRONOME_CHANNEL, 0x64, 127);
+        sink.control_change(METRONOME_CHANNEL, 0x07, METRONOME_CC_VOLUME as u8);
         let tracks = events.track_channels.len();
         Self {
             sink,
@@ -109,6 +142,9 @@ impl<S: Sink> Engine<S> {
             speed: 1.0,
             playing: false,
             metronome: false,
+            metronome_sound: MetronomeSound::default(),
+            kit: TabKit::default(),
+            metronome_layers: 1,
             notes_muted: false,
             muted: vec![false; tracks],
             soloed: vec![false; tracks],
@@ -189,6 +225,92 @@ impl<S: Sink> Engine<S> {
 
     pub fn set_metronome(&mut self, on: bool) {
         self.metronome = on;
+    }
+
+    /// Play the tab with another set of guitars, basses and drums. Sounding notes keep their
+    /// instrument; the next ones use the new one.
+    pub fn set_kit(&mut self, kit: TabKit) {
+        if kit == self.kit {
+            return;
+        }
+        self.kit = kit;
+        for &(channel, program) in &self.events.programs {
+            self.sink.program_change(channel, kit.program(program));
+        }
+        self.sink.program_change(PERCUSSION_CHANNEL, kit.drum_kit());
+    }
+
+    pub fn kit(&self) -> TabKit {
+        self.kit
+    }
+
+    /// Loudness of the tab's notes (not the metronome) as an amplitude factor of the default,
+    /// 0–[`MAX_TAB_VOLUME`]: CC 7 = 100·√v on every channel but the metronome's.
+    pub fn set_tab_volume(&mut self, volume: f32) {
+        let v = if volume.is_finite() {
+            volume.clamp(0.0, MAX_TAB_VOLUME)
+        } else {
+            1.0
+        };
+        let cc = (METRONOME_CC_VOLUME * v.sqrt()).round().min(127.0) as u8;
+        for channel in (0..16).filter(|&c| c != METRONOME_CHANNEL) {
+            self.sink.control_change(channel, 0x07, cc);
+        }
+    }
+
+    pub fn set_metronome_sound(&mut self, sound: MetronomeSound) {
+        if sound != self.metronome_sound {
+            // Its note-offs would go to the new sound's keys.
+            self.sink.channel_notes_off(METRONOME_CHANNEL);
+            self.metronome_sound = sound;
+        }
+    }
+
+    /// Metronome (and count-in) loudness as an amplitude factor of the default click,
+    /// 0–[`MAX_METRONOME_VOLUME`], independent of the tab's.
+    ///
+    /// Channel gain goes with the square of CC 7, so CC 7 = 100·√v; above 1× each click sounds
+    /// as two identical voices (twice the amplitude) and CC 7 makes up the rest.
+    pub fn set_metronome_volume(&mut self, volume: f32) {
+        let v = if volume.is_finite() {
+            volume.clamp(0.0, MAX_METRONOME_VOLUME)
+        } else {
+            1.0
+        };
+        self.metronome_layers = if v > 1.0 { 2 } else { 1 };
+        let per_layer = v / f32::from(self.metronome_layers);
+        let cc = (METRONOME_CC_VOLUME * per_layer.sqrt()).round().min(127.0);
+        self.sink.control_change(METRONOME_CHANNEL, 0x07, cc as u8);
+    }
+
+    /// Shift the metronome's pitch by `semitones` (±[`METRONOME_PITCH_RANGE`]).
+    pub fn set_metronome_pitch(&mut self, semitones: f32) {
+        let st = if semitones.is_finite() {
+            semitones.clamp(-METRONOME_PITCH_RANGE, METRONOME_PITCH_RANGE)
+        } else {
+            0.0
+        };
+        let value = (8192.0 + st / METRONOME_PITCH_RANGE * 8192.0)
+            .round()
+            .clamp(0.0, 16383.0);
+        self.sink.pitch_bend(METRONOME_CHANNEL, value as u16);
+    }
+
+    /// Sound one accented click now, whether or not playing (to audition the settings).
+    pub fn preview_click(&mut self) {
+        self.click(true, 115);
+    }
+
+    fn click(&mut self, accent: bool, velocity: u8) {
+        let key = self.metronome_sound.key(accent);
+        self.sink.note_off(METRONOME_CHANNEL, key);
+        self.click_on(key, velocity);
+    }
+
+    fn click_on(&mut self, key: u8, velocity: u8) {
+        for _ in 0..self.metronome_layers {
+            self.sink.note_on(METRONOME_CHANNEL, key, velocity);
+        }
     }
 
     /// Silence every track, leaving only the metronome and count-in clicks.
@@ -314,10 +436,7 @@ impl<S: Sink> Engine<S> {
                 && f64::from(ci.next_beat) * ci.beat_secs <= ci.elapsed + EPS
             {
                 let accent = ci.next_beat % ci.beats_per_bar.max(1) == 0;
-                let key = if accent { CLICK_ACCENT_KEY } else { CLICK_KEY };
-                self.sink.note_off(PERCUSSION_CHANNEL, key);
-                self.sink
-                    .note_on(PERCUSSION_CHANNEL, key, if accent { 115 } else { 85 });
+                self.click(accent, if accent { 115 } else { 85 });
                 ci.next_beat += 1;
             }
             if ci.elapsed + EPS < ci.total_secs() {
@@ -372,8 +491,17 @@ impl<S: Sink> Engine<S> {
     }
 
     fn fire(&mut self, e: Event) {
+        if e.track == METRONOME_TRACK {
+            let key = self.metronome_sound.key(e.key == CLICK_ACCENT_KEY);
+            if e.is_on() {
+                self.click_on(key, e.velocity);
+            } else {
+                self.sink.note_off(e.channel, key);
+            }
+            return;
+        }
         if e.is_on() {
-            if e.track == METRONOME_TRACK || self.audible(e.track) {
+            if self.audible(e.track) {
                 self.sink.note_on(e.channel, e.key, e.velocity);
             }
         } else {

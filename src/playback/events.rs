@@ -8,11 +8,77 @@ use crate::timeline::{PlayedBar, Timeline};
 
 /// MIDI channel 10 (0-based 9): General MIDI percussion.
 pub const PERCUSSION_CHANNEL: u8 = 9;
+/// The metronome's own channel (a drum kit, like percussion), so its volume and pitch can be
+/// set without touching the tab's drums.
+pub const METRONOME_CHANNEL: u8 = 15;
 /// `Event::track` of metronome clicks.
 pub const METRONOME_TRACK: u16 = u16::MAX;
-/// GM Hi Wood Block (accented click) and Low Wood Block.
+/// Keys of accented / plain clicks in the event list. They mark which a click is; the engine
+/// swaps in the keys of the chosen [`MetronomeSound`] when it fires them.
 pub const CLICK_ACCENT_KEY: u8 = 76;
 pub const CLICK_KEY: u8 = 77;
+
+/// The sound set the tab plays with: guitars, basses and the drum kit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, uniffi::Enum)]
+pub enum TabKit {
+    /// The tab's own instruments and the standard drum kit.
+    #[default]
+    Standard,
+    /// Distortion guitar, pick bass and the power kit.
+    Rock,
+    /// Steel-string (nylon stays nylon) guitar, acoustic bass and the brush kit.
+    Acoustic,
+}
+
+impl TabKit {
+    /// The GM program a track with `program` plays in this kit: guitars (24–31) and basses
+    /// (32–39) are swapped, anything else is left alone.
+    pub fn program(self, program: u8) -> u8 {
+        let guitar = (24..=31).contains(&program);
+        let bass = (32..=39).contains(&program);
+        match self {
+            Self::Standard => program,
+            Self::Rock if guitar => 30,
+            Self::Rock if bass => 34,
+            Self::Acoustic if guitar && program == 24 => 24,
+            Self::Acoustic if guitar => 25,
+            Self::Acoustic if bass => 32,
+            _ => program,
+        }
+    }
+
+    /// The drum kit (a program in bank 128) for the percussion channel.
+    pub fn drum_kit(self) -> u8 {
+        match self {
+            Self::Standard => 0,
+            Self::Rock => 16,
+            Self::Acoustic => 40,
+        }
+    }
+}
+
+/// What the metronome clicks with: a GM percussion sound.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, uniffi::Enum)]
+pub enum MetronomeSound {
+    /// Hi / low wood block.
+    #[default]
+    WoodBlock,
+    Cowbell,
+    /// Side stick: a dry click.
+    Stick,
+}
+
+impl MetronomeSound {
+    /// The drum key for an accented (beat 1) or plain click.
+    pub fn key(self, accent: bool) -> u8 {
+        match (self, accent) {
+            (Self::WoodBlock, true) => 76,
+            (Self::WoodBlock, false) => 77,
+            (Self::Cowbell, _) => 56,
+            (Self::Stick, _) => 37,
+        }
+    }
+}
 const CLICK_SECS: f64 = 0.05;
 
 /// How long a grace note sounds before its main beat.
@@ -91,9 +157,10 @@ struct StringState {
     legato_next: bool,
 }
 
-/// Channels for melodic tracks: every channel except percussion, reused round-robin.
+/// Channels for melodic tracks: every channel except percussion and the metronome's, reused
+/// round-robin.
 fn assign_channels(score: &Score) -> (Vec<u8>, Vec<(u8, u8)>) {
-    const MELODIC: [u8; 15] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15];
+    const MELODIC: [u8; 14] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14];
     let mut next = 0;
     let mut programs: Vec<(u8, u8)> = Vec::new();
     let channels = score
@@ -191,7 +258,7 @@ pub fn build(score: &Score, timeline: &Timeline) -> Events {
             let click = Event {
                 secs,
                 track: METRONOME_TRACK,
-                channel: PERCUSSION_CHANNEL,
+                channel: METRONOME_CHANNEL,
                 key,
                 velocity,
             };
