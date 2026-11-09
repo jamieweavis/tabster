@@ -1,0 +1,15 @@
+# release-plz opens a release PR (version bump + CHANGELOG.md from conventional commits) on every push
+# to main. When that PR is merged it pushes the `v{{ version }}` tag and creates a draft GitHub Release;
+# the package jobs in .github/workflows/build.yml attach the app build and publish it.
+[workspace]
+# Not published to crates.io: take the current version from git tags instead of the registry.
+git_only = true
+git_release_draft = true
+# Only the app is released; tools/uniffi-bindgen shares the workspace version but isn't shipped.
+release = false
+
+[[package]]
+name = "tabster"
+release = true
+git_tag_name = "v{{ version }}"
+git_release_name = "v{{ version }}"
