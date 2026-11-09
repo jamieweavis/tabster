@@ -9,16 +9,21 @@ struct ColumnAutosizer: NSViewRepresentable {
     /// The widest content of the column with this header title, or nil to leave it alone.
     /// (SwiftUI's cells always fill their column, so they can't be measured directly.)
     var contentWidth: (String) -> CGFloat?
+    /// Called once the table is found and its columns no longer autoresize. Until then the table
+    /// stretches its columns to fill its first layout, so widths seen before this aren't the user's.
+    var onAttach: () -> Void = {}
 
     func makeNSView(context: Context) -> Probe { Probe() }
     func updateNSView(_ view: Probe, context: Context) {
         view.contentWidth = contentWidth
+        view.onAttach = onAttach
         view.attachSoon()
     }
 
     final class Probe: NSView {
         private weak var table: NSTableView?
         var contentWidth: (String) -> CGFloat? = { _ in nil }
+        var onAttach: () -> Void = {}
         private var monitor: Any?
 
         override func viewDidMoveToWindow() {
@@ -42,6 +47,7 @@ struct ColumnAutosizer: NSViewRepresentable {
             guard monitor == nil, window != nil, let table = nearestTable() else { return }
             self.table = table
             table.columnAutoresizingStyle = .noColumnAutoresizing
+            onAttach()
             // A local monitor sees header clicks before the header does: a double-click on a
             // divider sizes that column; a right-click (or Control-click) shows the header menu
             // with the fit options added.

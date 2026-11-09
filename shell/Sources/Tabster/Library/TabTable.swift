@@ -18,6 +18,9 @@ struct TabTable: View {
     /// to its minimum; those changes aren't saved, and the saved layout comes back on reopening.
     @State private var columns: TableColumnCustomization<TabSummary>?
     @State private var tableWidth: CGFloat = 0
+    /// False until `ColumnAutosizer` has stopped the columns autoresizing: the table's first layout
+    /// stretches them to fill it, and that mustn't overwrite the saved widths.
+    @State private var layoutSettled = false
     /// Below this the table is collapsing (the list's minimum width is 240).
     private static let usableWidth: CGFloat = 200
 
@@ -79,7 +82,11 @@ struct TabTable: View {
             .width(22)
             .customizationID("favourite")
         }
-        .background(ColumnAutosizer(contentWidth: contentWidth))
+        .background(ColumnAutosizer(contentWidth: contentWidth) {
+            // Undo the first layout's stretching, then start saving.
+            columns = savedColumns
+            layoutSettled = true
+        })
         .safeAreaInset(edge: .top, spacing: 0) { searchBar }
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { width in
             let wasUsable = tableWidth >= Self.usableWidth
@@ -88,7 +95,7 @@ struct TabTable: View {
             if !wasUsable, width >= Self.usableWidth { columns = savedColumns }
         }
         .onChange(of: columns) { _, new in
-            if let new, tableWidth >= Self.usableWidth { savedColumns = new }
+            if let new, layoutSettled, tableWidth >= Self.usableWidth { savedColumns = new }
         }
         .contextMenu(forSelectionType: Int64.self) { ids in
             if !ids.isEmpty { menu(for: ids) }

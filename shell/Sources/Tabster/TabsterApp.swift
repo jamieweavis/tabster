@@ -13,7 +13,10 @@ struct TabsterApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Tabster") {
+        // An explicit id keeps AppKit's window-frame and split-view autosave keys stable; without
+        // one they embed the content's type name, which for the DEBUG harness's private view
+        // includes an address that changes every build, so sizes reset on each rebuild.
+        WindowGroup("Tabster", id: "main") {
             ViewerHarness.debugHarnessIfRequested { ContentView() }
                 .environment(appDelegate.model)
         }
