@@ -60,6 +60,9 @@ impl From<LibraryError> for CoreError {
 pub trait LibraryObserver: Send + Sync {
     fn import_progress(&self, done: u32, total: u32);
     fn library_changed(&self);
+    /// A tab was opened, which only changes its "last opened" time: a list needs reloading only
+    /// if it's sorted by that.
+    fn tab_opened(&self, id: TabId);
 }
 
 /// How long config changes must settle before they're written.
@@ -322,8 +325,11 @@ impl Core {
     /// Open a tab for viewing and playback.
     pub fn open_tab(&self, id: TabId) -> Result<Arc<TabSession>, CoreError> {
         let score = self.shared.library.load_score(id)?;
-        // Opening updates "last opened", which the Recently Opened list shows.
-        self.changed();
+        // Opening updates "last opened", which only the Recently Opened sort shows; not a full
+        // `library_changed`, which would reload the list on every open.
+        if let Some(o) = self.shared.observer.read().clone() {
+            o.tab_opened(id);
+        }
         Ok(Arc::new(TabSession::new(id, score)))
     }
 }

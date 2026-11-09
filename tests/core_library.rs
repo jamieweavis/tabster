@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use tabster_core::config::{self, Config};
-use tabster_core::library::TabFilter;
+use tabster_core::library::{TabFilter, TabId};
 use tabster_core::{Core, LibraryObserver};
 
 const TITLE_OFFSET: usize = 0x24;
@@ -75,6 +75,7 @@ impl LibraryObserver for Recorder {
     fn library_changed(&self) {
         self.changed.fetch_add(1, Ordering::SeqCst);
     }
+    fn tab_opened(&self, _id: TabId) {}
 }
 
 #[test]

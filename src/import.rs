@@ -314,6 +314,7 @@ mod tests {
             self.calls.lock().push((done, total));
         }
         fn library_changed(&self) {}
+        fn tab_opened(&self, _id: crate::library::TabId) {}
     }
 
     #[test]

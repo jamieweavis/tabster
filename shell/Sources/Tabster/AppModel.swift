@@ -234,4 +234,13 @@ final class LibraryObserverBridge: LibraryObserver {
             MainActor.assumeIsolated { model?.reloadAll() }
         }
     }
+
+    /// Only "last opened" changed, which the table shows only as the Recently Opened order.
+    func tabOpened(id: Int64) {
+        DispatchQueue.main.async { [weak model] in
+            MainActor.assumeIsolated {
+                if model?.sort == .recentlyOpened { model?.reloadTabs() }
+            }
+        }
+    }
 }
