@@ -7,14 +7,19 @@ import SwiftUI
 /// frame changes only, so the cursor animates without redrawing the tab.
 struct TabCanvasView: NSViewRepresentable {
     let model: TabViewerModel
+    /// The player bar is pinned over the bottom edge, so leave room for it under the tab.
+    var reservesPlayerSpace = true
 
     func makeNSView(context: Context) -> TabCanvasContainer {
         let view = TabCanvasContainer(model: model)
+        view.reservesPlayerSpace = reservesPlayerSpace
         model.sink = view
         return view
     }
 
-    func updateNSView(_ view: TabCanvasContainer, context: Context) {}
+    func updateNSView(_ view: TabCanvasContainer, context: Context) {
+        view.reservesPlayerSpace = reservesPlayerSpace
+    }
 
     static func dismantleNSView(_ view: TabCanvasContainer, coordinator: ()) {
         view.stopDisplayLink()
@@ -35,6 +40,13 @@ final class TabCanvasContainer: NSView, TabCanvasSink {
     private var lastFrameTimestamp: CFTimeInterval = 0
     private var scrollTarget: CGFloat?
     private var cursor: Cursor?
+    /// Room under the tab for the player bar that floats over the canvas's bottom edge.
+    static let playerClearance: CGFloat = 96
+    /// False while the player bar hides itself: the tab may then use the full height.
+    var reservesPlayerSpace = true {
+        didSet { if reservesPlayerSpace != oldValue { sizeDocument() } }
+    }
+    private var bottomClearance: CGFloat { reservesPlayerSpace ? Self.playerClearance : 0 }
 
     init(model: TabViewerModel) {
         self.model = model
@@ -80,7 +92,7 @@ final class TabCanvasContainer: NSView, TabCanvasSink {
         let clip = scrollView.contentSize
         let list = document.renderer?.list
         let width = max(CGFloat(list?.width ?? 0), clip.width)
-        let height = max(CGFloat(list?.height ?? 0) + 24, clip.height)
+        let height = max(CGFloat(list?.height ?? 0) + bottomClearance, clip.height)
         if document.frame.size != CGSize(width: width, height: height) {
             document.setFrameSize(CGSize(width: width, height: height))
         }
@@ -151,7 +163,9 @@ final class TabCanvasContainer: NSView, TabCanvasSink {
         let system = list.systems[Int(cursor.system)].frame.cg
         let visible = scrollView.contentView.bounds
         let target = scrollTarget ?? visible.minY
-        let shown = CGRect(x: visible.minX, y: target, width: visible.width, height: visible.height)
+        // The player bar (when pinned) covers the bottom of the viewport.
+        let shown = CGRect(x: visible.minX, y: target, width: visible.width,
+                           height: max(visible.height - bottomClearance, visible.height / 2))
         let outside = system.minY < shown.minY || system.maxY > shown.maxY
         let inBottomThird = system.maxY > shown.minY + shown.height * 2 / 3
         guard outside || (model.isPlaying && inBottomThird) else { return }
@@ -203,7 +217,7 @@ final class TabCanvasContainer: NSView, TabCanvasSink {
         }
         lastFrameTimestamp = link.timestamp
         let cursor = model.frameTick(at: link.targetTimestamp)
-        if cursor != self.cursor { moveCursor(cursor, follow: true) }
+        if cursor != self.cursor { moveCursor(cursor, follow: model.followCursor) }
         ViewerMetrics.tick.add((CACurrentMediaTime() - start) * 1000)
     }
 
@@ -333,6 +347,11 @@ final class TabDocumentView: NSView {
         switch event.specialKey {
         case .leftArrow?: model.previousBar(); return
         case .rightArrow?: model.nextBar(); return
+        case .delete?: model.rewind(); return
+        case .upArrow?, .downArrow?:
+            // Step through the tab list, as if it had focus. Changing tab rebuilds the viewer,
+            // which takes focus back, so holding the key keeps stepping.
+            if let table = visibleTable() { table.keyDown(with: event); return }
         default: break
         }
         switch event.charactersIgnoringModifiers {
@@ -342,6 +361,20 @@ final class TabDocumentView: NSView {
         case "\\": model.setLoop(nil)
         default: super.keyDown(with: event)
         }
+    }
+
+    /// The window's tab list, unless it's hidden (collapsed sidebar) or absent (viewer harness).
+    private func visibleTable() -> NSTableView? {
+        guard let root = window?.contentView else { return nil }
+        var queue = [root]
+        while !queue.isEmpty {
+            let view = queue.removeFirst()
+            if let table = view as? NSTableView {
+                return table.isHiddenOrHasHiddenAncestor || table.visibleRect.width < 1 ? nil : table
+            }
+            queue.append(contentsOf: view.subviews)
+        }
+        return nil
     }
 }
 

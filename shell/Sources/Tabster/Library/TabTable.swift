@@ -11,6 +11,8 @@ struct TabTable: View {
     @State private var deleting: Set<Int64> = []
     /// Practice seconds per tab, for the Practice column.
     @State private var practice: [Int64: Double] = [:]
+    /// Bumped when the viewer records practice, to refresh `practice`.
+    @State private var practiceRevision = 0
     /// Which columns are shown, their order and widths, as last seen at a usable width;
     /// persisted across launches.
     @AppStorage("libraryColumns") private var savedColumns = TableColumnCustomization<TabSummary>()
@@ -108,22 +110,16 @@ struct TabTable: View {
         .overlay {
             if model.tabs.isEmpty { emptyState }
         }
-        // Refreshed with the list and when a tab is closed (selection changes).
-        .task(id: [model.tabs.map(\.id), [model.selection ?? 0]]) {
+        // Refreshed with the list, when a tab is closed (selection changes) and when practice is recorded.
+        .task(id: [model.tabs.map(\.id), [model.selection ?? 0, Int64(practiceRevision)]]) {
             guard let core = model.core else { return }
             practice = await Task.detached { (try? core.practiceTotals()) ?? [:] }.value
         }
+        .onReceive(NotificationCenter.default.publisher(for: .practiceRecorded)) { _ in
+            practiceRevision += 1
+        }
         .navigationTitle("All Tabs")
         .navigationSubtitle(model.tabs.isEmpty ? "" : "\(model.tabs.count) tab\(model.tabs.count == 1 ? "" : "s")")
-        .toolbar {
-            ToolbarItem {
-                Text("Tabster")
-                    .font(.title3.weight(.semibold))
-                    .padding(.horizontal, 6)
-            }
-            .sharedBackgroundVisibility(.hidden)
-            ToolbarSpacer(.flexible)
-        }
         .sheet(item: $tagging) { tab in
             TagsSheet(tab: tab)
         }

@@ -28,6 +28,8 @@ final class AppModel {
     private(set) var tabs: [TabSummary] = []
     private(set) var tags: [String] = []
     var selection: Int64?
+    /// The open tab's title and artist, published by its viewer (the table's rows may be filtered).
+    var openTab: OpenTabCaption?
 
     // MARK: Import state
 
@@ -243,4 +245,11 @@ final class LibraryObserverBridge: LibraryObserver {
             }
         }
     }
+}
+
+/// What the window header shows for the open tab while the player bar is hidden.
+struct OpenTabCaption: Equatable {
+    let tabID: Int64
+    let title: String
+    let artist: String
 }

@@ -60,7 +60,11 @@ final class TabViewerModel {
         let stored = UserDefaults.standard.object(forKey: TabViewerModel.scaleKey) as? Float ?? 1
         return min(max(stored, TabViewerModel.scaleRange.lowerBound), TabViewerModel.scaleRange.upperBound)
     }()
-    private(set) var showRhythm: Bool = UserDefaults.standard.object(forKey: "viewer.showRhythm") as? Bool ?? true
+    /// Follows Preferences (`Config::show_rhythm`); `TabViewer` relays changes.
+    private(set) var showRhythm: Bool = true
+    /// Scroll to keep the cursor in view while playing. Follows Preferences
+    /// (`Config::follow_cursor`); `TabViewer` relays changes.
+    var followCursor: Bool = true
     var isPlaying = false {
         didSet {
             guard isPlaying != oldValue else { return }
@@ -105,13 +109,31 @@ final class TabViewerModel {
     /// The tab synth, once its SoundFont has loaded (nil if the app has none).
     @ObservationIgnored var synthClock: SynthPlaybackClock?
     var synthAvailable = false
-    /// Hear the tab through the synth when no video is the clock. Remembered across tabs.
-    var tabAudio = UserDefaults.standard.object(forKey: "tabAudio") as? Bool ?? true {
+    /// Hear the tab through the synth (the synth is then the clock). Exclusive with
+    /// `videoAudio`: turning one on turns the other off. Remembered across tabs.
+    var tabAudio = TabViewerModel.initialTabAudio {
         didSet {
             UserDefaults.standard.set(tabAudio, forKey: "tabAudio")
+            if tabAudio, videoAudio { videoAudio = false }
             configureSynthLayers()
             if !usingVideoClock { adoptInternalClock() }
         }
+    }
+    /// Play the selected YouTube video's audio (the video is then the clock). Exclusive with
+    /// `tabAudio`. Remembered across tabs.
+    var videoAudio = UserDefaults.standard.object(forKey: "videoAudio") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(videoAudio, forKey: "videoAudio")
+            if !videoAudio { syncEditing = false }
+            updateClockSource()
+            if videoAudio, tabAudio { tabAudio = false }
+        }
+    }
+    /// Stored preferences from before the two were exclusive may both be on: the video wins.
+    private static var initialTabAudio: Bool {
+        let tab = UserDefaults.standard.object(forKey: "tabAudio") as? Bool ?? true
+        let video = UserDefaults.standard.object(forKey: "videoAudio") as? Bool ?? true
+        return tab && !video
     }
     /// Click along: over the tab audio, on its own, or over a video's audio (the synth then
     /// follows the video clock with its notes muted).
@@ -121,19 +143,46 @@ final class TabViewerModel {
             if !usingVideoClock, !tabAudio { adoptInternalClock() }
         }
     }
+    /// The guitars, basses and drums the tab plays with. Remembered.
+    var tabKit = TabKit(stored: UserDefaults.standard.string(forKey: "viewer.tabKit")) {
+        didSet {
+            UserDefaults.standard.set(tabKit.stored, forKey: "viewer.tabKit")
+            synthClock?.synth.setKit(kit: tabKit)
+        }
+    }
+    /// Loudness of the tab's notes (× the default, 0–1.5), apart from the metronome. Remembered.
+    var tabVolume = UserDefaults.standard.object(forKey: "viewer.tabVolume") as? Float ?? 1 {
+        didSet {
+            UserDefaults.standard.set(tabVolume, forKey: "viewer.tabVolume")
+            synthClock?.synth.setTabVolume(volume: tabVolume)
+        }
+    }
+    /// The metronome's click, loudness (× the default click, 0–3) and pitch (semitones,
+    /// −12…12). Remembered.
+    var metronomeSound = MetronomeSound(stored: UserDefaults.standard.string(forKey: "viewer.metronomeSound")) {
+        didSet {
+            UserDefaults.standard.set(metronomeSound.stored, forKey: "viewer.metronomeSound")
+            applyMetronomeSettings()
+        }
+    }
+    var metronomeVolume = UserDefaults.standard.object(forKey: "viewer.metronomeLevel") as? Float ?? 1 {
+        didSet {
+            UserDefaults.standard.set(metronomeVolume, forKey: "viewer.metronomeLevel")
+            applyMetronomeSettings()
+        }
+    }
+    var metronomePitch = UserDefaults.standard.object(forKey: "viewer.metronomePitch") as? Float ?? 0 {
+        didSet {
+            UserDefaults.standard.set(metronomePitch, forKey: "viewer.metronomePitch")
+            applyMetronomeSettings()
+        }
+    }
     @ObservationIgnored private(set) var playedBars: [PlayedBar] = []
     @ObservationIgnored var position: PlaybackPosition?
 
     // Practice tools (see TabViewerModel+Practice.swift).
     /// The tab's saved loop sections.
     var savedLoops: [SavedLoop] = []
-    /// The running speed trainer (needs a loop).
-    var trainer: SpeedTrainer?
-    var trainerSettings = SpeedTrainer.Settings(
-        string: UserDefaults.standard.string(forKey: "viewer.trainer") ?? ""
-    ) ?? SpeedTrainer.Settings() {
-        didSet { UserDefaults.standard.set(trainerSettings.string, forKey: "viewer.trainer") }
-    }
     /// A bar of clicks before playing (synth clock only). Remembered across tabs.
     var countIn = UserDefaults.standard.bool(forKey: "viewer.countIn") {
         didSet {
@@ -141,15 +190,16 @@ final class TabViewerModel {
             synthClock?.countInBars = countIn ? 1 : 0
         }
     }
-    var practiceStats: PracticeStats?
-    /// The practice popover is open.
-    var showPractice = false
+    /// The metronome options popover is open.
+    var showMetronomeOptions = false
+    /// The tab audio options popover is open.
+    var showTabAudioOptions = false
+    /// The video options popover is open.
+    var showVideoOptions = false
+    /// The loop options popover is open.
+    var showLoopOptions = false
     @ObservationIgnored var practiceTimer = PracticeTimer()
     @ObservationIgnored var practiceFlushTask: Task<Void, Never>?
-    /// Score time of the last frame, to notice the clock wrapping the loop on its own (the synth).
-    @ObservationIgnored var lastTickScore: Double?
-    /// Debug harness: called on every loop pass the trainer counts.
-    @ObservationIgnored var trainerObserver: ((SpeedTrainer, SpeedTrainer.Event) -> Void)?
     /// Video time of every played bar's start under the current sync (for taps and the ruler).
     @ObservationIgnored var barVideoTimes: [Double] = []
     /// Bars the user placed explicitly in per-bar mode (taps, drags).
@@ -167,7 +217,10 @@ final class TabViewerModel {
     @ObservationIgnored private var layoutGeneration = 0
     @ObservationIgnored private let worker = LayoutWorker()
     @ObservationIgnored private var lastDisplayUpdate: CFTimeInterval = 0
-    @ObservationIgnored private(set) var loopSpan: Range<Double>?
+    /// The session hears about it too, so the cursor glides from the loop's end to its start.
+    @ObservationIgnored private(set) var loopSpan: Range<Double>? {
+        didSet { session?.setLoop(startSecs: loopSpan?.lowerBound, endSecs: loopSpan?.upperBound) }
+    }
     @ObservationIgnored private var restoredPosition: Double?
     @ObservationIgnored private let openedAt = CACurrentMediaTime()
     @ObservationIgnored private var firstLayoutDone = false
@@ -177,6 +230,9 @@ final class TabViewerModel {
     init(core: Core, tabID: Int64) {
         self.core = core
         self.tabID = tabID
+        let config = core.config()
+        showRhythm = config.showRhythm
+        followCursor = config.followCursor
     }
 
     // MARK: - Opening
@@ -214,6 +270,7 @@ final class TabViewerModel {
         switch opened {
         case let .success(opened):
             session = opened.session
+            session?.setLoop(startSecs: loopSpan?.lowerBound, endSecs: loopSpan?.upperBound)
             info = opened.info
             playedBars = opened.playedBars
             if let state = opened.state { restore(state, info: opened.info) }
@@ -310,7 +367,7 @@ final class TabViewerModel {
             updateLoopSpan(near: currentTime)
             sink?.showLoop(loop)
         }
-        sink?.moveCursor(position?.cursor, follow: first ? restoredPosition != nil : isPlaying)
+        sink?.moveCursor(position?.cursor, follow: first ? restoredPosition != nil : isPlaying && followCursor)
         if first, autoplay { play() }
     }
 
@@ -337,7 +394,6 @@ final class TabViewerModel {
     func setShowRhythm(_ on: Bool) {
         guard on != showRhythm else { return }
         showRhythm = on
-        UserDefaults.standard.set(on, forKey: "viewer.showRhythm")
         relayout(anchor: nil)
     }
 
@@ -355,11 +411,10 @@ final class TabViewerModel {
         // A video keeps its own position (e.g. still in the intro, before bar 1) unless the
         // transport has to move it.
         if !usingVideoClock || t != now { seekClock(toScore: t) }
-        lastTickScore = nil
         clock.play()
         isPlaying = true
         sink?.playingChanged(true)
-        refresh(follow: true)
+        refresh(follow: followCursor)
     }
 
     func pause() {
@@ -377,7 +432,6 @@ final class TabViewerModel {
         seekClock(toScore: t)
         displayTime = t
         updateLoopSpan(near: t)
-        lastTickScore = nil
         refresh(follow: true)
         if !isPlaying { scheduleSave() }
     }
@@ -393,16 +447,11 @@ final class TabViewerModel {
             // while YouTube catches up (~0.5 s).
             t = span.lowerBound
             seekClock(toScore: t)
-            loopWrapped(span)
-        } else if let span = loopSpan, let last = lastTickScore, Self.wrappedOnItsOwn(from: last, to: t, in: span) {
-            // The synth loops by itself.
-            loopWrapped(span)
         } else if t >= duration, !usingVideoClock {
             t = duration
             pause()
             seekClock(toScore: t)
         }
-        lastTickScore = t
         if usingVideoClock { followVideo(score: t, media: media, at: hostTime) }
         // A video plays on past the tab's ends (intro, outro); the cursor waits at the edge.
         position = cursorPosition(atScore: t)
@@ -479,6 +528,11 @@ final class TabViewerModel {
         seek(to: playedBars[target].startSecs)
     }
 
+    /// Back to the start of the loop when one is set, otherwise to the start of the tab.
+    func rewind() {
+        seek(to: loopSpan?.lowerBound ?? 0)
+    }
+
     /// The speeds the current clock offers.
     var speedOptions: [Double] { usingVideoClock ? Self.videoSpeeds : Self.speeds }
 
@@ -510,8 +564,6 @@ final class TabViewerModel {
 
     func setLoop(_ range: ClosedRange<UInt32>?) {
         loop = range
-        if range == nil { stopTrainer() }
-        lastTickScore = nil
         updateLoopSpan(near: currentTime)
         sink?.showLoop(range)
         if isPlaying, let span = loopSpan, !span.contains(currentTime) {
@@ -543,6 +595,8 @@ final class TabViewerModel {
         Task { [weak self] in
             guard let clock = await SynthPlaybackClock.make(session: session), let self else { return }
             clock.countInBars = self.countIn ? 1 : 0
+            clock.synth.setKit(kit: self.tabKit)
+            clock.synth.setTabVolume(volume: self.tabVolume)
             clock.synth.setLoop(startSecs: self.loopSpan?.lowerBound, endSecs: self.loopSpan?.upperBound)
             self.synthClock = clock
             self.synthAvailable = true
@@ -556,7 +610,20 @@ final class TabViewerModel {
     func configureSynthLayers() {
         guard let synth = synthClock?.synth else { return }
         synth.setMetronome(enabled: metronome)
+        applyMetronomeSettings()
         synth.setNotesMuted(muted: usingVideoClock || !tabAudio)
+    }
+
+    private func applyMetronomeSettings() {
+        guard let synth = synthClock?.synth else { return }
+        synth.setMetronomeSound(sound: metronomeSound)
+        synth.setMetronomeVolume(volume: metronomeVolume)
+        synth.setMetronomePitch(semitones: metronomePitch)
+    }
+
+    /// Click once with the current metronome settings (from its popover).
+    func previewMetronome() {
+        synthClock?.previewClick()
     }
 
     /// While a video is the clock, keep the synth's metronome on the video's beat.
@@ -644,5 +711,63 @@ final class TabViewerModel {
         let ms = (CACurrentMediaTime() - openedAt) * 1000
         ViewerMetrics.firstRenderMs = ms
         ViewerLog.log.info("First render \(ms, format: .fixed(precision: 1)) ms after open")
+    }
+}
+
+extension MetronomeSound: CaseIterable {
+    public static let allCases: [MetronomeSound] = [.woodBlock, .cowbell, .stick]
+
+    var title: String {
+        switch self {
+        case .woodBlock: "Wood Block"
+        case .cowbell: "Cowbell"
+        case .stick: "Stick"
+        }
+    }
+
+    /// The UserDefaults spelling.
+    var stored: String {
+        switch self {
+        case .woodBlock: "woodBlock"
+        case .cowbell: "cowbell"
+        case .stick: "stick"
+        }
+    }
+
+    init(stored: String?) {
+        self = Self.allCases.first { $0.stored == stored } ?? .woodBlock
+    }
+}
+
+extension TabKit: CaseIterable {
+    public static let allCases: [TabKit] = [.standard, .rock, .acoustic]
+
+    var title: String {
+        switch self {
+        case .standard: "Standard"
+        case .rock: "Rock"
+        case .acoustic: "Acoustic"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .standard: "The tab's own instruments, standard drums"
+        case .rock: "Distortion guitar, pick bass, power drums"
+        case .acoustic: "Steel-string guitar, acoustic bass, brushes"
+        }
+    }
+
+    /// The UserDefaults spelling.
+    var stored: String {
+        switch self {
+        case .standard: "standard"
+        case .rock: "rock"
+        case .acoustic: "acoustic"
+        }
+    }
+
+    init(stored: String?) {
+        self = Self.allCases.first { $0.stored == stored } ?? .standard
     }
 }

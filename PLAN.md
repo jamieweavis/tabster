@@ -224,7 +224,7 @@ Before fanning out, freeze the UniFFI surface from Phase 1. All Swift agents wor
 | Agent | Scope |
 |---|---|
 | **L: Synth playback** | `rustysynth` with a bundled GM SoundFont. MIDI events come from the timeline: tuning plus fret gives pitch; also velocity, dead and muted notes, simple bends. Output through `cpal`. Per-track mute/solo, metronome, count-in. Used when there is no video, or as a "tab audio" track mixed with the video |
-| **M: Practice tools** | Loop with auto-repeat. Speed trainer that steps the tempo up by N% after each clean loop. Saved loop sections per tab. Practice history (time spent per tab, stored in SQLite) |
+| **M: Practice tools** | Loop with auto-repeat. Saved loop sections per tab. Practice history (time spent per tab, stored in SQLite) |
 | **N: Rendering fidelity** | Optional standard-notation staff above the tab, slash rhythms, chord diagrams, lyrics lane, and more technique glyphs (vibrato, harmonics, tapping, let-ring, whammy) |
 
 ### Phase 5: Polish and release (2 parallel agents)

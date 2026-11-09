@@ -48,7 +48,7 @@ extension TabViewerModel {
             reloadVideos()
             if let video = videos.first(where: { $0.id == id }) {
                 if videos.count == 1 { try? core.setDefaultVideo(id: id) }
-                select(video)
+                chooseVideo(video)
             }
         } catch {
             ViewerLog.log.error("Attaching video failed: \(error)")
@@ -96,9 +96,18 @@ extension TabViewerModel {
 
     // MARK: - Clock source
 
-    /// YouTube drives playback when a video is selected and hasn't failed (shown or not).
+    /// YouTube drives playback when video audio is on and a video is selected and hasn't failed.
     private var wantsVideoClock: Bool {
-        selectedVideo != nil && player?.failure == nil
+        videoAudio && selectedVideo != nil && player?.failure == nil
+    }
+
+    /// The video button reads as on: video audio is on and there's a video to hear.
+    var hearingVideo: Bool { videoAudio && selectedVideo != nil }
+
+    /// Pick a video from the video panel: also turns video audio on.
+    func chooseVideo(_ video: Video) {
+        select(video)
+        videoAudio = true
     }
 
     func updateClockSource() {
@@ -137,10 +146,6 @@ extension TabViewerModel {
             player.seek(to: start)
         }
         speed = Self.snap(speed, to: Self.videoSpeeds)
-        if trainer != nil {
-            trainer?.setRates(Self.videoSpeeds)
-            speed = trainer?.speed ?? speed
-        }
         if abs(player.rate - speed) > 0.001 { videoClock.rate = speed }
         if wasPlaying { videoClock.play() }
         refresh(follow: false)
@@ -163,10 +168,6 @@ extension TabViewerModel {
             internalClock = InternalClock()
         }
         speed = Self.snap(speed, to: Self.speeds)
-        if trainer != nil {
-            trainer?.setRates(nil)
-            speed = trainer?.speed ?? speed
-        }
         internalClock.rate = speed
         internalClock.seek(to: score)
         if wasPlaying { internalClock.play() }

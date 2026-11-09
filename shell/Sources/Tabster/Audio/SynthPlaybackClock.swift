@@ -24,6 +24,9 @@ final class SynthPlaybackClock: PlaybackClock {
         Bundle.main.url(forResource: "SoundFont", withExtension: "sf2")
     }
 
+    /// Whether the app has a SoundFont, i.e. tab audio can ever be available.
+    nonisolated static let isBundled = soundFontURL != nil
+
     /// Create the synth for a session off the main thread (the first call loads the ~32 MB
     /// SoundFont). `nil` when there's no SoundFont: tab audio is unavailable.
     static func make(session: TabSession) async -> SynthPlaybackClock? {
@@ -93,6 +96,26 @@ final class SynthPlaybackClock: PlaybackClock {
             guard let self, !Task.isCancelled, !self.isPlaying else { return }
             self.audio.pause()
         }
+    }
+
+    /// Sound one click now to audition the metronome settings, running the audio device
+    /// briefly if nothing is playing.
+    func previewClick() {
+        if !isPlaying {
+            do {
+                try audio.start()
+            } catch {
+                SynthAudioEngine.log.error("Couldn't start audio: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+            idleTask?.cancel()
+            idleTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, !Task.isCancelled, !self.isPlaying else { return }
+                self.audio.pause()
+            }
+        }
+        synth.previewClick()
     }
 
     func seek(to time: Double) {

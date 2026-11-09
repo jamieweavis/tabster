@@ -8,6 +8,15 @@ struct TabViewer: View {
     let tabID: Int64
     @State private var model: TabViewerModel
     @State private var loopPrompt: LoopPrompt?
+    /// Pin the player bar on screen (the default); off, it slides away and comes back while the
+    /// pointer is near the bottom of the tab.
+    @AppStorage("viewer.showPlayer") private var showPlayer = true
+    /// Pointer within `revealZone` of the canvas's bottom edge (only used while unpinned).
+    @State private var pointerNearBottom = false
+    @State private var hideTask: Task<Void, Never>?
+    @State private var canvasHeight: CGFloat = 0
+    /// Optional: the debug harness shows a viewer without the app model.
+    @Environment(AppModel.self) private var app: AppModel?
 
     init(core: Core, tabID: Int64) {
         self.core = core
@@ -44,9 +53,6 @@ struct TabViewer: View {
                                 .accessibilityHidden(true)
                         }
                     }
-                Divider()
-                TransportBar(model: model)
-                    .disabled(model.info == nil)
             }
         }
         .frame(minWidth: 480, minHeight: 320)
@@ -70,7 +76,9 @@ struct TabViewer: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .navigationTitle(model.info?.title ?? "")
         .navigationSubtitle(model.info?.artist ?? "")
-        .toolbar { ViewerToolbar(model: model, loopPrompt: $loopPrompt) }
+        // The title and artist head the player bar instead; the window keeps them (Window menu).
+        .toolbar(removing: .title)
+        .toolbar { ViewerToolbar(model: model, app: app, showPlayer: $showPlayer) }
         .modifier(LoopPromptModifier(model: model, prompt: $loopPrompt))
         .sheet(isPresented: Binding(get: { model.showAttachSheet }, set: { model.showAttachSheet = $0 })) {
             VideoAttachSheet(onAttach: { id, label in model.addVideo(youtubeID: id, label: label) })
@@ -82,19 +90,82 @@ struct TabViewer: View {
             }
         }
         .task { await model.open() }
-        .onDisappear { model.close() }
+        .onChange(of: app?.config.showRhythm) { _, on in
+            if let on { model.setShowRhythm(on) }
+        }
+        .onChange(of: app?.config.followCursor) { _, on in
+            if let on { model.followCursor = on }
+        }
+        .onChange(of: model.info?.title, initial: true) { publishCaption() }
+        .onChange(of: model.info?.artist) { publishCaption() }
+        .onDisappear {
+            model.close()
+            // A new viewer may already have published its own.
+            if app?.openTab?.tabID == tabID { app?.openTab = nil }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             model.close(synchronously: true)
         }
     }
 
+    /// Tells the window header (which shows it while the player bar is hidden) what's open.
+    private func publishCaption() {
+        guard let app, let info = model.info else { return }
+        app.openTab = OpenTabCaption(tabID: tabID, title: info.title, artist: info.artist)
+    }
+
     /// The canvas exists while loading too, so its width is known by the time the session opens
     /// and the first layout can start immediately.
     private var canvas: some View {
-        TabCanvasView(model: model)
+        TabCanvasView(model: model, reservesPlayerSpace: showPlayer)
             .overlay {
                 if !model.hasLayout { ProgressView() }
             }
+            .overlay(alignment: .bottom) {
+                PlayerBar(model: model, loopPrompt: $loopPrompt)
+                    .frame(maxWidth: 980)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 14)
+                    .offset(y: playerVisible ? 0 : Self.hiddenOffset)
+                    .opacity(playerVisible ? 1 : 0)
+                    .allowsHitTesting(playerVisible)
+                    .animation(.spring(duration: 0.35, bounce: 0.1), value: playerVisible)
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { canvasHeight = $0 }
+            .onContinuousHover(coordinateSpace: .local) { phase in
+                switch phase {
+                case let .active(point): setPointerNearBottom(point.y >= canvasHeight - Self.revealZone)
+                case .ended: setPointerNearBottom(false)
+                }
+            }
+    }
+
+    /// How close to the bottom edge the pointer brings the hidden bar back (a little taller than
+    /// the bar and its margin).
+    private static let revealZone: CGFloat = 100
+    /// Far enough to slide the bar (60pt, 14pt margin) and its glass shadow off the bottom.
+    private static let hiddenOffset: CGFloat = 100
+
+    /// Shown when pinned, while the pointer is near the bottom, and while a loop prompt is open
+    /// (its popover hangs off the bar).
+    private var playerVisible: Bool {
+        showPlayer || pointerNearBottom || loopPrompt != nil
+    }
+
+    /// Showing is immediate; hiding waits a moment so brushing past the edge doesn't flicker it.
+    private func setPointerNearBottom(_ near: Bool) {
+        if near {
+            hideTask?.cancel()
+            hideTask = nil
+            if !pointerNearBottom { pointerNearBottom = true }
+        } else if pointerNearBottom, hideTask == nil {
+            hideTask = Task {
+                try? await Task.sleep(for: .milliseconds(600))
+                guard !Task.isCancelled else { return }
+                pointerNearBottom = false
+                hideTask = nil
+            }
+        }
     }
 }
 
@@ -102,183 +173,152 @@ struct TabViewer: View {
 
 private struct ViewerToolbar: ToolbarContent {
     let model: TabViewerModel
-    @Binding var loopPrompt: LoopPrompt?
+    /// Nil in the debug harness, where the toggle only affects this viewer.
+    let app: AppModel?
+    @Binding var showPlayer: Bool
 
+    /// The toolbar's items never change while tabs open and load: every control is there from
+    /// the first frame (disabled until the tab has loaded). Adding, removing or swapping an item
+    /// makes SwiftUI rebuild the group and AppKit re-tile the toolbar and animate it into place,
+    /// which was most of a tab switch's main-thread time and showed as the toolbar filling in in
+    /// chunks. (So the loop controls, and the indicator that comes and goes, live in the player bar.) One
+    /// group rather than an item each: separate items are each a glass platter, and cost more.
     var body: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            if let info = model.info, info.tracks.count > 0 {
-                // A borderless menu wrapped in a stack: toolbar pickers/menus otherwise render
-                // icon-only or with a blank title.
-                HStack {
-                    Menu {
-                        Picker("Track", selection: Binding(get: { model.track }, set: { model.setTrack($0) })) {
-                            ForEach(info.tracks, id: \.index) { track in
-                                Text(TabViewer.trackLabel(track)).tag(track.index)
-                            }
-                        }
-                        .pickerStyle(.inline)
-                    } label: {
-                        Text(model.currentTrack.map(TabViewer.trackLabel) ?? "Track")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
+        // Leading, so a centred window title (list hidden) doesn't push them right.
+        ToolbarItemGroup(placement: .navigation) {
+            trackMenu
+            sectionsMenu
+        }
+        ToolbarSpacer(.flexible)
+        ToolbarItem {
+            playerToggle
+        }
+        ToolbarItem {
+            followToggle
+        }
+        ToolbarItem {
+            rhythmToggle
+        }
+        ToolbarItem {
+            zoomButtons
+        }
+    }
+
+    /// One split control; the shortcuts themselves live on `TabViewer`'s hidden buttons (which
+    /// also catch ⌘+ and ⌘0).
+    private var zoomButtons: some View {
+        ControlGroup {
+            Button("Zoom Out", systemImage: "minus.magnifyingglass") { model.zoom(by: -0.1) }
+                .disabled(model.scale <= TabViewerModel.scaleRange.lowerBound)
+            Button("Zoom In", systemImage: "plus.magnifyingglass") { model.zoom(by: 0.1) }
+                .disabled(model.scale >= TabViewerModel.scaleRange.upperBound)
+        }
+        .controlGroupStyle(.navigation)
+        .help("Zoom (⌘+ / ⌘- / ⌘0)")
+    }
+
+    /// Pins the player bar; off, it hides until the pointer nears the bottom of the tab.
+    private var playerToggle: some View {
+        Toggle(isOn: $showPlayer) {
+            Label("Show Player", systemImage: "rectangle.bottomthird.inset.filled")
+        }
+        .toggleStyle(.button)
+        .help("Always show the player (otherwise it appears when the pointer nears the bottom)")
+    }
+
+    /// Writes Preferences (`Config::follow_cursor`), so it stays in step with the Settings toggle;
+    /// `TabViewer` relays the change to the model.
+    private var followToggle: some View {
+        Toggle(isOn: Binding(
+            get: { app?.config.followCursor ?? model.followCursor },
+            set: { on in
+                if let app {
+                    var config = app.config
+                    config.followCursor = on
+                    app.updateConfig(config)
+                } else {
+                    model.followCursor = on
                 }
-                .padding(.horizontal, 6)
-                .help("Track")
+                if on, model.isPlaying { model.refresh(follow: true) }
             }
+        )) {
+            Label("Follow Playhead", systemImage: "arrow.right.and.line.vertical.and.arrow.left")
+        }
+        .toggleStyle(.button)
+        .help("Scroll to follow the playhead while playing")
+    }
 
-            if let loop = model.loop {
-                Button {
-                    model.setLoop(nil)
-                } label: {
-                    Text("\(Image(systemName: "repeat")) \(TabViewer.loopLabel(loop))")
+    /// Writes Preferences (`Config::show_rhythm`), so it stays in step with the Settings toggle;
+    /// `TabViewer` relays the change to the model.
+    private var rhythmToggle: some View {
+        Toggle(isOn: Binding(
+            get: { app?.config.showRhythm ?? model.showRhythm },
+            set: { on in
+                if let app {
+                    var config = app.config
+                    config.showRhythm = on
+                    app.updateConfig(config)
+                } else {
+                    model.setShowRhythm(on)
                 }
-                .tint(.orange)
-                .help("Looping — click (or press \\) to clear")
             }
+        )) {
+            Label("Show Rhythm", systemImage: "music.note")
+        }
+        .toggleStyle(.button)
+        .help("Show rhythm notation")
+    }
 
-            if model.info != nil {
-                LoopsMenu(model: model, prompt: $loopPrompt)
-                PracticeButton(model: model)
+    /// Always present (disabled when the tab has no sections) so the toolbar never re-tiles.
+    private var sectionsMenu: some View {
+        let sections = model.info?.sections ?? []
+        return HStack {
+            Menu {
+                ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
+                    Button("\(section.label)  (bar \(section.masterBar + 1))") { model.seek(to: section.scoreSecs) }
+                }
+                Divider()
+                Button("Loop Section", systemImage: "repeat") { model.loopCurrentSection() }
+            } label: {
+                Label("Sections", systemImage: "list.bullet")
+                    .labelStyle(.iconOnly)
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+        }
+        .padding(.horizontal, 6)
+        .help("Jump to or loop a section")
+        .disabled(sections.isEmpty)
+    }
 
-            HStack {
-                Menu {
-                    Picker("Speed", selection: Binding(get: { model.speed }, set: { model.setSpeed($0) })) {
-                        ForEach(model.speedOptions, id: \.self) { speed in
-                            Text(TabViewer.percent(speed)).tag(speed)
+    private var trackMenu: some View {
+        // A borderless menu wrapped in a stack: toolbar pickers/menus otherwise render
+        // icon-only or with a blank title.
+        HStack {
+            Menu {
+                if let info = model.info {
+                    Picker("Track", selection: Binding(get: { model.track }, set: { model.setTrack($0) })) {
+                        ForEach(info.tracks, id: \.index) { track in
+                            Text(TabViewer.trackLabel(track)).tag(track.index)
                         }
                     }
                     .pickerStyle(.inline)
-                } label: {
-                    Text(TabViewer.percent(model.speed)).monospacedDigit()
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
+            } label: {
+                Text(model.currentTrack.map(TabViewer.trackLabel) ?? "Track")
             }
-            .padding(.horizontal, 6)
-            .help(model.usingVideoClock ? "Playback speed (YouTube's rates)" : "Playback speed")
-
-            if model.synthAvailable {
-                ControlGroup {
-                    Toggle(isOn: Binding(get: { model.tabAudio }, set: { model.tabAudio = $0 })) {
-                        Label("Tab Audio", systemImage: model.tabAudio ? "speaker.wave.2" : "speaker.slash")
-                    }
-                    .help(model.usingVideoClock ? "Tab audio plays when there's no video" : "Hear the tab")
-                    Toggle(isOn: Binding(get: { model.metronome }, set: { model.metronome = $0 })) {
-                        Label("Metronome", systemImage: "metronome")
-                    }
-                    .help(model.usingVideoClock ? "Metronome over the video" : "Metronome")
-                }
-            }
-
-            Toggle(isOn: Binding(get: { model.showRhythm }, set: { model.setShowRhythm($0) })) {
-                Label("Rhythm", systemImage: "music.note")
-            }
-            .help("Show rhythm")
-
-            if model.selectedVideo != nil {
-                Toggle(isOn: Binding(get: { model.syncEditing }, set: { model.syncEditing = $0 })) {
-                    Label("Sync", systemImage: "metronome")
-                }
-                .help("Sync the tab to the video")
-            }
-
-            if model.videos.isEmpty {
-                Button("Add YouTube Video…", systemImage: "play.rectangle") { model.showAttachSheet = true }
-                    .help("Add YouTube video…")
-            } else {
-                Menu {
-                    VideoPicker(
-                        videos: model.videos,
-                        selectedID: model.selectedVideoID,
-                        onSelect: { model.select($0) },
-                        onRemove: { model.removeVideo($0) },
-                        onSetDefault: { model.makeDefault($0) },
-                        onAdd: { model.showAttachSheet = true }
-                    )
-                } label: {
-                    Label("Video", systemImage: "play.rectangle")
-                }
-                .help("Choose the video whose audio plays with the tab")
-            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
         }
-    }
-}
-
-// MARK: - Transport
-
-private struct TransportBar: View {
-    let model: TabViewerModel
-
-    var body: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 4) {
-                Button("Previous Bar", systemImage: "backward.end.fill") { model.previousBar() }
-                Button(model.isPlaying ? "Pause" : "Play", systemImage: model.isPlaying ? "pause.fill" : "play.fill") {
-                    model.togglePlay()
-                }
-                .font(.title2)
-                .frame(width: 32)
-                Button("Next Bar", systemImage: "forward.end.fill") { model.nextBar() }
-            }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.borderless)
-
-            Text(TabViewer.time(model.displayTime))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(width: 44, alignment: .trailing)
-            Slider(
-                value: Binding(get: { min(model.displayTime, model.duration) }, set: { model.seek(to: $0) }),
-                in: 0...max(model.duration, 0.01)
-            )
-            .controlSize(.small)
-            Text(TabViewer.time(model.duration))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(width: 44, alignment: .leading)
-
-            if let summary = model.practiceSummary {
-                Label(summary, systemImage: "clock")
-                    .labelStyle(.titleAndIcon)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .help("Time spent playing this tab")
-            }
-
-            if let sections = model.info?.sections, !sections.isEmpty {
-                Menu {
-                    ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
-                        Button("\(section.label)  (bar \(section.masterBar + 1))") { model.seek(to: section.scoreSecs) }
-                    }
-                    Divider()
-                    Button("Loop Section", systemImage: "repeat") { model.loopCurrentSection() }
-                } label: {
-                    Label("Sections", systemImage: "list.bullet")
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("Jump to or loop a section")
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 6)
+        .help("Track")
+        .disabled((model.info?.tracks.count ?? 0) == 0)
     }
 }
 
 extension TabViewer {
-    /// "Lead Guitar · E A D G B E" (tuning lowest string first, like a guitarist reads it).
-    static func trackLabel(_ track: TrackInfo) -> String {
-        var label = track.name.isEmpty ? "Track \(track.index + 1)" : track.name
-        if !track.isPercussion, !track.tuning.isEmpty {
-            label += " · " + track.tuning.reversed().joined(separator: " ")
-        }
-        if track.capo > 0 { label += " · capo \(track.capo)" }
-        return label
-    }
+    /// Built in the core, e.g. "Bass · E A D G" or "Guitar 2 · E A D G B E · capo 2".
+    static func trackLabel(_ track: TrackInfo) -> String { track.label }
 
     static func loopLabel(_ loop: ClosedRange<UInt32>) -> String {
         loop.lowerBound == loop.upperBound ? "Bar \(loop.lowerBound + 1)" : "Bars \(loop.lowerBound + 1)–\(loop.upperBound + 1)"

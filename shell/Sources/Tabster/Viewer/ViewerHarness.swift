@@ -16,11 +16,11 @@ import SwiftUI
 /// the sync editor (`TABSTER_SYNC_PERBAR=1` in per-bar mode), and `TABSTER_VIDEO_LOG=<file>` writes every display frame (host, video and score time, played bar)
 /// and raw player sample as JSON lines.
 ///
-/// Practice: `TABSTER_TRAINER=<start>,<step>,<target>[,<passes>]` (percent) starts the speed
-/// trainer on `TABSTER_LOOP` once the clock is ready and logs every pass; `TABSTER_COUNTIN=1`,
-/// `TABSTER_TAB_AUDIO=0|1` (synth or silent internal clock), `TABSTER_PRACTICE_POPOVER=1` opens
-/// the practice popover (snapshotted beside the window), `TABSTER_PRACTICED=<secs>` seeds practice
-/// history and `TABSTER_SAVED_LOOPS=Name:13-16,…` seeds saved loops.
+/// Practice: `TABSTER_COUNTIN=1`,
+/// `TABSTER_TAB_AUDIO=0|1` (synth or silent internal clock), `TABSTER_PRACTICED=<secs>` seeds practice
+/// history and `TABSTER_SAVED_LOOPS=Name:13-16,…` seeds saved loops. `TABSTER_METRONOME=1` turns
+/// the metronome on; `TABSTER_METRONOME_POPOVER=1` / `TABSTER_TAB_AUDIO_POPOVER=1` open the
+/// metronome / tab audio options popover.
 ///
 /// Hook (in `TabsterApp`): `ViewerHarness.debugHarnessIfRequested { ContentView() }`.
 enum ViewerHarness {
@@ -84,8 +84,8 @@ private struct HarnessView: View {
         // Volatile: don't touch the user's saved preferences.
         var volatile = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
         if let audio = env["TABSTER_TAB_AUDIO"] { volatile["tabAudio"] = audio == "1" }
+        if let audio = env["TABSTER_VIDEO_AUDIO"] { volatile["videoAudio"] = audio == "1" }
         if let countIn = env["TABSTER_COUNTIN"] { volatile["viewer.countIn"] = countIn == "1" }
-        if let trainer = env["TABSTER_TRAINER"] { volatile["viewer.trainer"] = trainer }
         volatile[TabViewerModel.scaleKey] = env["TABSTER_SCALE"].flatMap(Float.init) ?? 1
         UserDefaults.standard.setVolatileDomain(volatile, forName: UserDefaults.argumentDomain)
         let practiced = env["TABSTER_PRACTICED"].flatMap(Double.init)
@@ -149,12 +149,34 @@ private struct HarnessView: View {
             self.model = model
             if env["TABSTER_SCROLLTEST"] == "1" { scheduleScrollTest() }
             if env["TABSTER_SELFTEST"] == "1" { scheduleSelfTest(model) }
-            if env["TABSTER_TRAINER"] != nil { scheduleTrainer(model) }
-            if env["TABSTER_PRACTICE_POPOVER"] == "1" {
+            if env["TABSTER_METRONOME"] == "1" { model.metronome = true }
+            if env["TABSTER_METRONOME_POPOVER"] == "1" {
                 Task {
                     while model.info == nil { try? await Task.sleep(for: .milliseconds(50)) }
                     try? await Task.sleep(for: .milliseconds(600))
-                    model.showPractice = true
+                    model.showMetronomeOptions = true
+                }
+            }
+            if env["TABSTER_TAB_AUDIO_POPOVER"] == "1" {
+                Task {
+                    while model.info == nil { try? await Task.sleep(for: .milliseconds(50)) }
+                    try? await Task.sleep(for: .milliseconds(600))
+                    model.showTabAudioOptions = true
+                }
+            }
+            if env["TABSTER_VIDEO_POPOVER"] == "1" {
+                Task {
+                    while model.info == nil { try? await Task.sleep(for: .milliseconds(50)) }
+                    try? await Task.sleep(for: .milliseconds(600))
+                    model.showVideoOptions = true
+                }
+            }
+            if env["TABSTER_LOOP_POPOVER"] == "1" {
+                Task {
+                    while model.info == nil { try? await Task.sleep(for: .milliseconds(50)) }
+                    try? await Task.sleep(for: .milliseconds(600))
+                    model.loopCurrentSection()
+                    model.showLoopOptions = true
                 }
             }
             if let snapshot = env["TABSTER_VIEW_SNAPSHOT"] { scheduleSnapshot(to: snapshot) }
@@ -206,34 +228,6 @@ private struct HarnessView: View {
             state("played 1s at 50%")
             model.pause()
             model.setSpeed(1)
-        }
-    }
-
-    /// Starts the speed trainer once the clock is ready and logs every counted pass.
-    private func scheduleTrainer(_ model: TabViewerModel) {
-        Task {
-            while model.info == nil || !model.hasLayout { try? await Task.sleep(for: .milliseconds(50)) }
-            // Give the synth (if wanted) a moment to load and become the clock.
-            let deadline = CACurrentMediaTime() + 5
-            while model.tabAudio, !model.synthAvailable, CACurrentMediaTime() < deadline {
-                try? await Task.sleep(for: .milliseconds(50))
-            }
-            let clockName = String(describing: type(of: model.clock))
-            let started = CACurrentMediaTime()
-            model.trainerObserver = { trainer, event in
-                report(String(format: "trainer t=%6.2fs pass %2d (%@): %@ → speed %@, clock rate %.3f, score %.2fs",
-                              CACurrentMediaTime() - started, trainer.totalPasses, clockName, "\(event)",
-                              TabViewer.percent(trainer.speed), model.clock.rate, model.currentTime))
-            }
-            model.startTrainer()
-            if let trainer = model.trainer, let span = model.loopSpan {
-                report(String(format: "trainer start on %@ (%@, count-in %d): loop %.2f–%.2fs, schedule %@",
-                              model.loop.map(TabViewer.loopLabel) ?? "-", clockName, model.countIn ? 1 : 0,
-                              span.lowerBound, span.upperBound,
-                              trainer.schedule.map { TabViewer.percent($0) }.joined(separator: " ")))
-            } else {
-                report("trainer: no loop (set TABSTER_LOOP)")
-            }
         }
     }
 

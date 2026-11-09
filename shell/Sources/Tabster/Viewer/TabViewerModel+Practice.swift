@@ -2,7 +2,7 @@ import Foundation
 import QuartzCore
 import TabsterKit
 
-/// Practice tools: saved loops, the speed trainer, count-in and practice-time history.
+/// Practice tools: saved loops, sections and practice-time history.
 extension TabViewerModel {
     /// How often practice time is written while playing.
     static let practiceFlushInterval: Duration = .seconds(30)
@@ -13,11 +13,7 @@ extension TabViewerModel {
         let core = core
         let id = tabID
         Task {
-            let (loops, stats) = await Task.detached {
-                ((try? core.savedLoops(tab: id)) ?? [], try? core.practiceStats(tab: id))
-            }.value
-            savedLoops = loops
-            practiceStats = stats
+            savedLoops = await Task.detached { (try? core.savedLoops(tab: id)) ?? [] }.value
         }
     }
 
@@ -48,6 +44,11 @@ extension TabViewerModel {
             ViewerLog.log.error("Saving loop failed: \(error)")
         }
         reloadSavedLoops()
+    }
+
+    /// The loop toggle: on loops the current section, off clears the loop.
+    func setLooping(_ on: Bool) {
+        if on { if loop == nil { loopCurrentSection() } } else { setLoop(nil) }
     }
 
     func select(_ saved: SavedLoop) {
@@ -94,65 +95,6 @@ extension TabViewerModel {
         setLoop(range)
     }
 
-    // MARK: - Speed trainer
-
-    /// The clock's speeds the trainer has to snap to (nil: any).
-    private var trainerRates: [Double]? { usingVideoClock ? Self.videoSpeeds : nil }
-
-    /// Start the trainer on the current loop from its first speed, playing from the loop start.
-    func startTrainer() {
-        guard loop != nil else { return }
-        let trainer = SpeedTrainer(settings: trainerSettings, rates: trainerRates)
-        self.trainer = trainer
-        applyTrainerSpeed(trainer.speed)
-        updateLoopSpan(near: currentTime)
-        if let span = loopSpan { seek(to: span.lowerBound) }
-        if !isPlaying { play() }
-        ViewerLog.log.info("Trainer started: \(trainer.schedule.map { TabViewer.percent($0) }.joined(separator: " → "), privacy: .public)")
-    }
-
-    func stopTrainer() {
-        guard trainer != nil else { return }
-        trainer = nil
-        // Back on the menu's speeds.
-        setSpeed(speed)
-    }
-
-    func trainerMissedPass() { trainer?.markMiss() }
-
-    private func applyTrainerSpeed(_ value: Double) {
-        speed = value
-        clock.rate = value
-        scheduleSave()
-    }
-
-    /// Playback wrapped the loop (`span`): count a trainer pass, step the speed up if earned,
-    /// and count in again before the faster pass.
-    func loopWrapped(_ span: Range<Double>) {
-        guard var trainer else { return }
-        let event = trainer.completePass()
-        self.trainer = trainer
-        switch event {
-        case .counted:
-            break
-        case let .stepped(to: speed), let .reachedTarget(speed):
-            applyTrainerSpeed(speed)
-            if countIn, let synthClock, clock === synthClock {
-                seekClock(toScore: span.lowerBound)
-                synthClock.synth.countIn(bars: 1)
-                lastTickScore = nil
-            }
-        }
-        trainerObserver?(trainer, event)
-    }
-
-    /// The clock jumped from late in the loop back to its start without us seeking (the synth
-    /// wraps its own loop).
-    static func wrappedOnItsOwn(from last: Double, to t: Double, in span: Range<Double>) -> Bool {
-        let middle = span.lowerBound + (span.upperBound - span.lowerBound) / 2
-        return t < last - 0.05 && last >= middle && t < middle && t >= span.lowerBound - 0.05
-    }
-
     // MARK: - Practice time
 
     /// Time the playing, writing it every ~30 s and when playback stops.
@@ -181,26 +123,28 @@ extension TabViewerModel {
         guard secs >= 0.5, session != nil else { return }
         let core = core
         let id = tabID
-        let write: @Sendable () -> PracticeStats? = {
+        let write: @Sendable () -> Bool = {
             do {
                 try core.recordPractice(tab: id, seconds: secs)
-                return try core.practiceStats(tab: id)
+                return true
             } catch {
                 ViewerLog.log.error("Recording practice failed: \(error)")
-                return nil
+                return false
             }
         }
         if synchronously {
             _ = write()
         } else {
             Task {
-                if let stats = await Task.detached(operation: write).value { practiceStats = stats }
+                if await Task.detached(operation: write).value {
+                    NotificationCenter.default.post(name: .practiceRecorded, object: nil)
+                }
             }
         }
     }
+}
 
-    /// "Practised 1h 12m · 24m this week", once there's a minute of practice.
-    var practiceSummary: String? {
-        practiceStats.flatMap { PracticeFormat.summary(totalSecs: $0.totalSecs, weekSecs: $0.last7DaysSecs) }
-    }
+extension Notification.Name {
+    /// Posted on the main thread after practice time is written, so the library can refresh.
+    static let practiceRecorded = Notification.Name("TabsterPracticeRecorded")
 }
