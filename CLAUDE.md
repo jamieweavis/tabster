@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Tabster is a local macOS guitar tab player: it imports Guitar Pro tabs (`.gp`, `.gpx`, `.gp5`) into a
 library, renders them, and plays them in sync with a YouTube video (per-tab offset or per-bar sync
 points). A Rust core does all the work; a thin SwiftUI shell draws the UI. Requires macOS 26+, Rust
-stable, Xcode's toolchain (the IDE is never opened) and `just`. See PLAN.md for the roadmap.
+stable, Xcode's toolchain (the IDE is never opened) and `just`.
 
 ## Commands
 

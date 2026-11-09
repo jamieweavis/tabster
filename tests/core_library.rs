@@ -245,7 +245,7 @@ fn player_url_serves_the_page() {
     assert!(response.ends_with("<html>yt</html>"));
 }
 
-/// The PLAN.md target: 1,000 small tabs in under 10 s.
+/// Target: 1,000 small tabs in under 10 s.
 /// `cargo test --release --test core_library bulk_import_benchmark -- --ignored --nocapture`
 #[test]
 #[ignore = "benchmark"]

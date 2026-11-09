@@ -10,7 +10,7 @@ import os
 ///
 /// Loading: `loadHTMLString(html, baseURL: https://tabster.local/)` gives the embed an origin
 /// and Referer. If YouTube still answers error 153 (no Referer), it retries once from the Rust
-/// core's localhost server (`Core.playerUrl()`). See PLAN.md §0 "YouTube embedding".
+/// core's localhost server (`Core.playerUrl()`). See the spike in `spikes/youtube/`.
 ///
 /// Per frame, read `clock.time(at: CACurrentMediaTime())` (or `time(at:)`); it never touches WebKit.
 @MainActor

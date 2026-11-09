@@ -4,7 +4,7 @@ import Foundation
 /// that can be read every display frame. Pure logic: callers pass host times (seconds on the
 /// `CACurrentMediaTime()` axis) for both events and frame reads.
 ///
-/// The model (see PLAN.md §0 "Smooth cursor" and the spike in `spikes/youtube/`):
+/// The model (see the spike in `spikes/youtube/`):
 /// - Between samples, extrapolate from the last anchor at the confirmed rate (the page's `rate`
 ///   event, never the rate we asked for).
 /// - Steady playback: drift beyond `deadband` (40 ms) is corrected quickly; smaller drift is

@@ -5,9 +5,6 @@
 //!
 //! Everything on disk is owner-only (0700 directories, 0600 files). Writes take turns on one
 //! connection; reads use a second, `query_only` connection, which WAL lets run alongside a write.
-//!
-//! Frozen contract: the public types and `Library` method signatures. Owner: Phase 1 agent E.
-//! The database schema is the agent's to design (see PLAN.md §1 for the intended shape).
 
 use std::fs::{self, DirBuilder};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
