@@ -39,6 +39,9 @@ pub struct Track {
     /// General MIDI program (0–127). Ignored when `is_percussion`.
     pub program: u8,
     pub is_percussion: bool,
+    /// What the file says the instrument is, when it says (GP6+ `Instrument ref`). Use
+    /// [`Track::instrument`] for the resolved kind.
+    pub instrument_hint: Option<Instrument>,
     /// MIDI pitch of each open string, index 0 = string 1 (highest pitch).
     pub tuning: Vec<u8>,
     pub capo: u8,
@@ -46,9 +49,80 @@ pub struct Track {
     pub bars: Vec<Bar>,
 }
 
+/// The broad kind of instrument a track is for, as shown to the player.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Instrument {
+    Guitar,
+    Bass,
+    Drums,
+    Keys,
+    Other,
+}
+
+impl Instrument {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Guitar => "Guitar",
+            Self::Bass => "Bass",
+            Self::Drums => "Drums",
+            Self::Keys => "Keys",
+            Self::Other => "Other",
+        }
+    }
+
+    /// Classifies a GP6+ `<Instrument ref>` (`e-gtr6`, `a-bass4`, `drmkt`, `pno-gs` …).
+    pub fn from_gpif_ref(r: &str) -> Option<Self> {
+        let r = r.to_ascii_lowercase();
+        if r.contains("bass") {
+            Some(Self::Bass)
+        } else if r.contains("gtr") {
+            Some(Self::Guitar)
+        } else if r.starts_with("drm") || r.contains("perc") {
+            Some(Self::Drums)
+        } else if ["pno", "e-pno", "keys", "org", "hpsch", "syn"]
+            .iter()
+            .any(|p| r.starts_with(p))
+        {
+            Some(Self::Keys)
+        } else {
+            None
+        }
+    }
+}
+
+/// Note name of a MIDI pitch, sharps only.
+pub fn note_name(pitch: u8) -> &'static str {
+    const NAMES: [&str; 12] = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
+    NAMES[usize::from(pitch % 12)]
+}
+
 impl Track {
     pub fn string_count(&self) -> usize {
         self.tuning.len()
+    }
+
+    /// The track's instrument: the file's own word if it has one, else the General MIDI program,
+    /// else guessed from the tuning (a top string below G3 is a bass).
+    pub fn instrument(&self) -> Instrument {
+        if self.is_percussion {
+            return Instrument::Drums;
+        }
+        if let Some(i) = self.instrument_hint {
+            return i;
+        }
+        match self.program {
+            24..=31 => return Instrument::Guitar,
+            32..=39 => return Instrument::Bass,
+            0..=7 => return Instrument::Keys,
+            _ => {}
+        }
+        match self.tuning.iter().max() {
+            Some(&top) if top < 55 => Instrument::Bass,
+            Some(_) => Instrument::Guitar,
+            None => Instrument::Other,
+        }
     }
 
     /// MIDI pitch of a fretted note, or `None` if the string doesn't exist.

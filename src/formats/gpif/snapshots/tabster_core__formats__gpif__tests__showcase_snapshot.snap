@@ -1,5 +1,6 @@
 ---
 source: src/formats/gpif/tests.rs
+assertion_line: 54
 expression: showcase()
 ---
 Score {
@@ -17,6 +18,7 @@ Score {
             short_name: "L.Gtr",
             program: 29,
             is_percussion: false,
+            instrument_hint: None,
             tuning: [
                 64,
                 59,
@@ -1190,6 +1192,7 @@ Score {
             short_name: "E.Bass",
             program: 33,
             is_percussion: false,
+            instrument_hint: None,
             tuning: [
                 43,
                 38,

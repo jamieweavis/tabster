@@ -149,7 +149,7 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Bumped whenever the cached form of a score changes incompatibly. The crate version is also
 /// part of the header, so every release starts with a fresh cache.
-const CACHE_FORMAT: u32 = 1;
+const CACHE_FORMAT: u32 = 2;
 const CACHE_MAGIC: &[u8; 4] = b"SGSC";
 
 /// Separates tag names in `group_concat` (`char(31)`, the ASCII unit separator).

@@ -36,8 +36,8 @@ use log::debug;
 
 use super::ParseError;
 use crate::model::{
-    Bar, Beat, Bend, Direction, Duration, FileSyncPoint, Harmonic, MasterBar, Note, Score, Section,
-    Slide, Stroke, TempoChange, TimeSignature, Track, TripletFeel, Voice,
+    Bar, Beat, Bend, Direction, Duration, FileSyncPoint, Harmonic, Instrument, MasterBar, Note,
+    Score, Section, Slide, Stroke, TempoChange, TimeSignature, Track, TripletFeel, Voice,
 };
 use dom::{Doc, El};
 
@@ -394,6 +394,7 @@ fn read_track(el: El<'_>) -> RawTrack<'_> {
             "ShortName" => rt.track.short_name = c.text().to_owned(),
             "Instrument" => {
                 let r = c.attr("ref").unwrap_or("");
+                rt.track.instrument_hint = Instrument::from_gpif_ref(r);
                 if r.ends_with("-gs") || r.ends_with("GrandStaff") {
                     rt.staff_count = rt.staff_count.max(2);
                 }

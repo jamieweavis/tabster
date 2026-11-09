@@ -419,6 +419,7 @@ impl Parser<'_> {
             short_name: String::new(),
             program,
             is_percussion: flags & 0x01 != 0 || channel == 9,
+            instrument_hint: None,
             tuning,
             capo,
             bars: Vec::with_capacity(self.score.master_bars.len()),

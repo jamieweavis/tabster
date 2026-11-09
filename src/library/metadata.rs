@@ -89,16 +89,9 @@ pub(super) fn tuning_label(score: &Score) -> String {
     }
     low_to_high
         .iter()
-        .map(|&p| note_name(p))
+        .map(|&p| crate::model::note_name(p))
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-fn note_name(pitch: u8) -> &'static str {
-    const NAMES: [&str; 12] = [
-        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-    ];
-    NAMES[usize::from(pitch % 12)]
 }
 
 /// Length in seconds as played: repeats and jumps unrolled, tempo changes applied.

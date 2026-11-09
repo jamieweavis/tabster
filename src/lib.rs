@@ -484,12 +484,56 @@ fn expand_home(path: &str) -> PathBuf {
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct TrackInfo {
     pub index: u32,
-    pub name: String,
+    /// What the track picker shows, e.g. "Bass · E A D G" or "Guitar 2 · D A D G B E · capo 2".
+    pub label: String,
     pub strings: u32,
     /// Note names, string 1 (highest) first, e.g. ["E", "B", "G", "D", "A", "E"].
     pub tuning: Vec<String>,
     pub capo: u32,
     pub is_percussion: bool,
+}
+
+/// "Guitar 2 · E A D G B E · capo 2": the instrument (numbered when the score has several of the
+/// same kind), the tuning lowest string first, and the capo. Tracks of no recognised kind keep
+/// their own name.
+fn track_label(tracks: &[model::Track], index: usize) -> String {
+    use model::Instrument;
+    let track = &tracks[index];
+    let kind = track.instrument();
+    let mut label = if kind == Instrument::Other {
+        match track.name.trim() {
+            "" => format!("Track {}", index + 1),
+            name => name.to_owned(),
+        }
+    } else {
+        let same = |t: &model::Track| t.instrument() == kind;
+        let total = tracks.iter().filter(|t| same(t)).count();
+        if total > 1 {
+            let nth = tracks[..index].iter().filter(|t| same(t)).count() + 1;
+            format!("{} {nth}", kind.label())
+        } else {
+            kind.label().to_owned()
+        }
+    };
+    if matches!(
+        kind,
+        Instrument::Guitar | Instrument::Bass | Instrument::Other
+    ) && !track.is_percussion
+        && !track.tuning.is_empty()
+    {
+        label.push_str(" · ");
+        let names: Vec<&str> = track
+            .tuning
+            .iter()
+            .rev()
+            .map(|&p| model::note_name(p))
+            .collect();
+        label.push_str(&names.join(" "));
+    }
+    if track.capo > 0 && !track.is_percussion {
+        label.push_str(&format!(" · capo {}", track.capo));
+    }
+    label
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -576,9 +620,13 @@ impl TabSession {
             .enumerate()
             .map(|(i, t)| TrackInfo {
                 index: i as u32,
-                name: t.name.clone(),
+                label: track_label(&self.score.tracks, i),
                 strings: t.tuning.len() as u32,
-                tuning: t.tuning.iter().map(|&p| note_name(p).to_string()).collect(),
+                tuning: t
+                    .tuning
+                    .iter()
+                    .map(|&p| crate::model::note_name(p).to_string())
+                    .collect(),
                 capo: u32::from(t.capo),
                 is_percussion: t.is_percussion,
             })
@@ -722,14 +770,6 @@ impl TabSession {
     }
 }
 
-/// Note name of a MIDI pitch, sharps only.
-fn note_name(pitch: u8) -> &'static str {
-    const NAMES: [&str; 12] = [
-        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-    ];
-    NAMES[usize::from(pitch % 12)]
-}
-
 /// Parse a YouTube URL or bare id into its 11-character id.
 #[uniffi::export]
 pub fn youtube_id(input: String) -> Option<String> {
@@ -741,4 +781,73 @@ pub fn youtube_id(input: String) -> Option<String> {
 #[uniffi::export]
 pub fn bar_points_sync(points: Vec<f64>) -> SyncSpec {
     sync::from_bar_points(&points)
+}
+
+#[cfg(test)]
+mod track_label_tests {
+    use super::track_label;
+    use crate::model::{Instrument, Track};
+
+    fn track(name: &str, program: u8, tuning: &[u8]) -> Track {
+        Track {
+            name: name.into(),
+            program,
+            tuning: tuning.to_vec(),
+            ..Default::default()
+        }
+    }
+
+    const GUITAR: &[u8] = &[64, 59, 55, 50, 45, 40];
+    const BASS: &[u8] = &[43, 38, 33, 28];
+
+    #[test]
+    fn names_the_instrument_not_the_player() {
+        let tracks = [track("Flea", 33, BASS)];
+        assert_eq!(track_label(&tracks, 0), "Bass · E A D G");
+    }
+
+    #[test]
+    fn numbers_duplicates_and_shows_capo() {
+        let mut capo = track("Rhythm", 29, GUITAR);
+        capo.capo = 2;
+        let tracks = [track("Lead", 30, GUITAR), track("Bass", 34, BASS), capo];
+        assert_eq!(track_label(&tracks, 0), "Guitar 1 · E A D G B E");
+        assert_eq!(track_label(&tracks, 1), "Bass · E A D G");
+        assert_eq!(track_label(&tracks, 2), "Guitar 2 · E A D G B E · capo 2");
+    }
+
+    #[test]
+    fn file_hint_beats_program_and_tuning_decides_last() {
+        let mut hinted = track("x", 0, GUITAR);
+        hinted.instrument_hint = Some(Instrument::Bass);
+        assert_eq!(hinted.instrument(), Instrument::Bass);
+        assert_eq!(track("x", 105, BASS).instrument(), Instrument::Bass);
+        assert_eq!(track("x", 105, GUITAR).instrument(), Instrument::Guitar);
+        let drums = Track {
+            is_percussion: true,
+            ..track("Drums", 0, &[0; 6])
+        };
+        assert_eq!(track_label(&[drums], 0), "Drums");
+    }
+
+    #[test]
+    fn unknown_instruments_keep_their_name() {
+        let tracks = [track("Violin", 40, &[]), track("", 40, &[])];
+        assert_eq!(track_label(&tracks, 0), "Violin");
+        assert_eq!(track_label(&tracks, 1), "Track 2");
+    }
+
+    #[test]
+    fn gpif_refs() {
+        for (r, i) in [
+            ("e-gtr6", Instrument::Guitar),
+            ("a-gtr7", Instrument::Guitar),
+            ("e-bass4", Instrument::Bass),
+            ("drmkt", Instrument::Drums),
+            ("pno-gs", Instrument::Keys),
+        ] {
+            assert_eq!(Instrument::from_gpif_ref(r), Some(i), "{r}");
+        }
+        assert_eq!(Instrument::from_gpif_ref("vln"), None);
+    }
 }

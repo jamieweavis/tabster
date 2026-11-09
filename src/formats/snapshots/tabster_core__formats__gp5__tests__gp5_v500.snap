@@ -1,5 +1,6 @@
 ---
 source: src/formats/gp5.rs
+assertion_line: 1047
 expression: score
 ---
 Score {
@@ -17,6 +18,7 @@ Score {
             short_name: "",
             program: 27,
             is_percussion: false,
+            instrument_hint: None,
             tuning: [
                 64,
                 59,
@@ -356,6 +358,7 @@ Score {
             short_name: "",
             program: 0,
             is_percussion: true,
+            instrument_hint: None,
             tuning: [
                 0,
                 0,
