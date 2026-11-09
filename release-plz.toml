@@ -7,6 +7,10 @@ git_only = true
 git_release_draft = true
 # Only the app is released; tools/uniffi-bindgen shares the workspace version but isn't shipped.
 release = false
+# Tabster is an app, not a library: its public Rust API is only the FFI to our own shell, and
+# cargo-semver-checks can't build rustdoc on Linux (oslog needs macOS headers). Versions still follow
+# semver from Conventional Commits: mark breaking changes with `!`.
+semver_check = false
 
 [[package]]
 name = "tabster"
