@@ -578,7 +578,13 @@ pub struct PlaybackPosition {
 struct SessionState {
     layout: DisplayList,
     sync: SyncMap,
+    /// The looped span in score seconds: the cursor glides from its end back to its start.
+    loop_span: Option<(f64, f64)>,
 }
+
+/// How long before a downbeat (score seconds) the cursor starts sliding into the next bar, so it
+/// lands on the bar's first beat as that beat plays. Never starts before the bar's last onset.
+const GLIDE_SECS: f64 = 0.12;
 
 /// One open tab. Thread-safe; the per-frame methods (`position_at_*`) don't allocate beyond the
 /// returned record.
@@ -601,12 +607,55 @@ impl TabSession {
             state: Mutex::new(SessionState {
                 layout: DisplayList::default(),
                 sync,
+                loop_span: None,
             }),
         }
     }
 
     pub fn score(&self) -> &Score {
         &self.score
+    }
+
+    /// In the last moment of a played bar, slide `cursor` towards the first beat of the bar
+    /// played next (the loop start when the bar ends the loop), arriving on the downbeat.
+    /// Hot path: no allocation.
+    fn glide_into_next_bar(
+        &self,
+        state: &SessionState,
+        cursor: Cursor,
+        played_bar: usize,
+        score_secs: f64,
+    ) -> Cursor {
+        let bars = self.timeline.played_bars();
+        let bar = &bars[played_bar];
+        let remaining = bar.end_secs - score_secs;
+        if !(remaining > 0.0 && remaining < GLIDE_SECS) {
+            return cursor;
+        }
+        let next = match state.loop_span {
+            Some((start, end)) if (bar.end_secs - end).abs() < 1e-6 => {
+                self.timeline.position_at_secs(start).map(|p| p.played_bar)
+            }
+            _ => Some(played_bar + 1),
+        };
+        let Some(next) = next.and_then(|i| bars.get(i)) else {
+            return cursor;
+        };
+        let bar_ticks = (bar.end_tick - bar.start_tick) as u32;
+        let last_onset_secs = layout::last_onset(&state.layout, bar.master_bar)
+            .filter(|&t| t < bar_ticks)
+            .map_or(bar.start_secs, |t| {
+                self.timeline.tick_to_secs(bar.start_tick + u64::from(t))
+            });
+        let window = GLIDE_SECS.min(bar.end_secs - last_onset_secs);
+        if window <= 0.0 || remaining >= window {
+            return cursor;
+        }
+        let next_ticks = (next.end_tick - next.start_tick) as u32;
+        match layout::cursor(&state.layout, next.master_bar, 0, next_ticks) {
+            Some(to) => layout::glide(cursor, to, (1.0 - remaining / window) as f32),
+            None => cursor,
+        }
     }
 }
 
@@ -698,12 +747,20 @@ impl TabSession {
         let bar = self.timeline.played_bars()[pos.played_bar];
         let bar_ticks = (bar.end_tick - bar.start_tick) as u32;
         let state = self.state.lock();
+        let cursor = layout::cursor(&state.layout, pos.master_bar, pos.tick_in_bar, bar_ticks)
+            .map(|c| self.glide_into_next_bar(&state, c, pos.played_bar, score_secs));
         Some(PlaybackPosition {
             score_secs,
             played_bar: pos.played_bar as u32,
             master_bar: pos.master_bar,
-            cursor: layout::cursor(&state.layout, pos.master_bar, pos.tick_in_bar, bar_ticks),
+            cursor,
         })
+    }
+
+    /// The looped span (score seconds) playback wraps around, so the cursor glides from its
+    /// end to its start rather than on into the bar after it. `None` clears it.
+    pub fn set_loop(&self, start_secs: Option<f64>, end_secs: Option<f64>) {
+        self.state.lock().loop_span = start_secs.zip(end_secs).filter(|(s, e)| s < e);
     }
 
     pub fn position_at_video(&self, video_secs: f64) -> Option<PlaybackPosition> {

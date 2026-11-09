@@ -167,6 +167,17 @@ pub fn cursor(
     query::cursor(list, master_bar, tick_in_bar, bar_ticks)
 }
 
+/// Tick (within the bar) of the last beat onset laid out in `master_bar`, if it has any.
+pub fn last_onset(list: &DisplayList, master_bar: u32) -> Option<u32> {
+    query::last_onset(list, master_bar)
+}
+
+/// `from` moved fraction `t` (0...1, eased in and out) of the way to `to`: the cursor and bar
+/// highlight sliding into the next bar. Keeps `from`'s bar; takes `to`'s system.
+pub fn glide(from: Cursor, to: Cursor, t: f32) -> Cursor {
+    query::glide(from, to, t)
+}
+
 /// The master bar and tick under a point in list coordinates, for click-to-seek. Snaps to the
 /// nearest beat onset in the bar under the point. `None` if no bar is there.
 pub fn hit_test(list: &DisplayList, x: f32, y: f32) -> Option<(u32, u32)> {

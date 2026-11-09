@@ -131,3 +131,48 @@ fn real_tab_pipeline() {
         run_pipeline(&path.to_string_lossy());
     }
 }
+
+/// Approaching a downbeat, the cursor slides into the next played bar and lands on its first
+/// beat as that bar starts; with a loop, the last bar slides back to the loop's first.
+#[test]
+fn cursor_glides_into_the_next_bar() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::with_paths(dir.path(), &dir.path().join("tabster.toml")).unwrap();
+    let id = core.import_paths(vec![fixture("gp5/basics.gp5")])[0]
+        .id
+        .unwrap();
+    let session = core.open_tab(id).unwrap();
+    session.layout(LayoutOptions {
+        track: 0,
+        width: 900.0,
+        scale: 1.0,
+        show_rhythm: true,
+    });
+    let bars = session.played_bars();
+    assert!(bars.len() >= 3);
+    let x_at = |t: f64| session.position_at_score(t).unwrap().cursor.unwrap();
+
+    for pair in bars.windows(2) {
+        let (bar, next) = (pair[0], pair[1]);
+        let landing = x_at(next.start_secs);
+        let just_before = x_at(bar.end_secs - 1e-5);
+        assert_eq!(just_before.master_bar, bar.master_bar);
+        assert!(
+            (just_before.x - landing.x).abs() < 1.0 && (just_before.y - landing.y).abs() < 1.0,
+            "bar {} ends at {just_before:?}, next starts at {landing:?}",
+            bar.master_bar
+        );
+        // Well before the end, it's still inside its own bar.
+        let earlier = x_at(bar.end_secs - 0.5_f64.min((bar.end_secs - bar.start_secs) / 2.0));
+        let frame = earlier.bar_frame;
+        assert!(earlier.x >= frame.x && earlier.x <= frame.x + frame.width);
+    }
+
+    let (first, second) = (bars[0], bars[1]);
+    session.set_loop(Some(first.start_secs), Some(second.end_secs));
+    let landing = x_at(first.start_secs);
+    let just_before = x_at(second.end_secs - 1e-5);
+    assert!((just_before.x - landing.x).abs() < 1.0);
+    session.set_loop(None, None);
+    assert!((x_at(second.end_secs - 1e-5).x - x_at(bars[2].start_secs).x).abs() < 1.0);
+}

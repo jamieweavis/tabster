@@ -2,14 +2,10 @@
 //! Both rely on systems being ordered top to bottom and bars by master bar index (each master bar
 //! appears once), so they are binary searches and never allocate.
 
-use super::{Cursor, DisplayList};
+use super::{BarBox, Cursor, DisplayList, Rect};
 
-pub(super) fn cursor(
-    list: &DisplayList,
-    master_bar: u32,
-    tick_in_bar: u32,
-    bar_ticks: u32,
-) -> Option<Cursor> {
+/// The system index and laid-out bar for a master bar.
+fn find_bar(list: &DisplayList, master_bar: u32) -> Option<(usize, &BarBox)> {
     let si = list
         .systems
         .partition_point(|s| s.bars.last().is_some_and(|b| b.master_bar < master_bar));
@@ -18,7 +14,44 @@ pub(super) fn cursor(
         .bars
         .binary_search_by_key(&master_bar, |b| b.master_bar)
         .ok()?;
-    let bar = &system.bars[bi];
+    Some((si, &system.bars[bi]))
+}
+
+pub(super) fn last_onset(list: &DisplayList, master_bar: u32) -> Option<u32> {
+    find_bar(list, master_bar)?
+        .1
+        .beats
+        .last()
+        .map(|b| b.tick_in_bar)
+}
+
+pub(super) fn glide(from: Cursor, to: Cursor, t: f32) -> Cursor {
+    let t = t.clamp(0.0, 1.0);
+    let e = t * t * (3.0 - 2.0 * t);
+    let mix = |a: f32, b: f32| a + (b - a) * e;
+    Cursor {
+        master_bar: from.master_bar,
+        // The destination's system, so following scrolls there as the glide starts.
+        system: to.system,
+        x: mix(from.x, to.x),
+        y: mix(from.y, to.y),
+        height: mix(from.height, to.height),
+        bar_frame: Rect {
+            x: mix(from.bar_frame.x, to.bar_frame.x),
+            y: mix(from.bar_frame.y, to.bar_frame.y),
+            width: mix(from.bar_frame.width, to.bar_frame.width),
+            height: mix(from.bar_frame.height, to.bar_frame.height),
+        },
+    }
+}
+
+pub(super) fn cursor(
+    list: &DisplayList,
+    master_bar: u32,
+    tick_in_bar: u32,
+    bar_ticks: u32,
+) -> Option<Cursor> {
+    let (si, bar) = find_bar(list, master_bar)?;
     let frame = bar.frame;
     let right = frame.x + frame.width;
 
