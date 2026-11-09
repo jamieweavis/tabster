@@ -229,7 +229,10 @@ mod tests {
         assert_eq!(version, 2);
         // Old data survives; the new tables work.
         assert_eq!(library.get(tab).unwrap().title, "Old");
-        assert_eq!(library.practice_state(tab).unwrap().loop_start_bar, Some(3));
+        assert_eq!(
+            library.practice_state(tab).unwrap().unwrap().loop_start_bar,
+            Some(3)
+        );
         assert!(library.saved_loops(tab).unwrap().is_empty());
         library.save_loop(tab, "Intro", 0, 3).unwrap();
         library.record_practice_at(tab, 60.0, NOON).unwrap();

@@ -257,7 +257,8 @@ final class TabViewerModel {
                 let videos = (try? core.videos(tab: id)) ?? []
                 var list: DisplayList?
                 if width > 0 {
-                    let track = state.map(\.track).flatMap { t in info.tracks.contains { $0.index == t } ? t : nil } ?? 0
+                    let track = state.map(\.track).flatMap { t in info.tracks.contains { $0.index == t } ? t : nil }
+                        ?? info.defaultTrack
                     list = session.layout(options: LayoutOptions(track: track, width: width, scale: scale, showRhythm: showRhythm))
                 }
                 return .success(Opened(session: session, info: info, state: state, playedBars: bars, videos: videos,
@@ -273,6 +274,7 @@ final class TabViewerModel {
             session?.setLoop(startSecs: loopSpan?.lowerBound, endSecs: loopSpan?.upperBound)
             info = opened.info
             playedBars = opened.playedBars
+            track = opened.info.defaultTrack
             if let state = opened.state { restore(state, info: opened.info) }
             phase = .ready
             loadPracticeData()

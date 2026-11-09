@@ -50,7 +50,7 @@ pub struct Track {
 }
 
 /// The broad kind of instrument a track is for, as shown to the player.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
 pub enum Instrument {
     Guitar,
     Bass,

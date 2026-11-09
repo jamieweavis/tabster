@@ -273,7 +273,9 @@ impl Core {
         Ok(self.shared.library.set_video_sync(id, &sync)?)
     }
 
-    pub fn practice_state(&self, tab: TabId) -> Result<PracticeState, CoreError> {
+    /// The tab's saved practice state; `None` until it's first saved (a tab never opened), when
+    /// the viewer starts on `TabInfo::default_track`.
+    pub fn practice_state(&self, tab: TabId) -> Result<Option<PracticeState>, CoreError> {
         Ok(self.shared.library.practice_state(tab)?)
     }
 
@@ -330,7 +332,10 @@ impl Core {
         if let Some(o) = self.shared.observer.read().clone() {
             o.tab_opened(id);
         }
-        Ok(Arc::new(TabSession::new(id, score)))
+        let preferred = self.config.read().preferred_instrument;
+        let mut session = TabSession::new(id, score);
+        session.default_track = default_track(&session.score.tracks, preferred);
+        Ok(Arc::new(session))
     }
 }
 
@@ -502,6 +507,14 @@ pub struct TrackInfo {
 /// "Guitar 2 · E A D G B E · capo 2": the instrument (numbered when the score has several of the
 /// same kind), the tuning lowest string first, and the capo. Tracks of no recognised kind keep
 /// their own name.
+/// The track a tab opens on the first time: the first `preferred` track if there is one,
+/// else the first track.
+fn default_track(tracks: &[model::Track], preferred: Option<model::Instrument>) -> u32 {
+    preferred
+        .and_then(|kind| tracks.iter().position(|t| t.instrument() == kind))
+        .map_or(0, |i| i as u32)
+}
+
 fn track_label(tracks: &[model::Track], index: usize) -> String {
     use model::Instrument;
     let track = &tracks[index];
@@ -555,6 +568,9 @@ pub struct TabInfo {
     pub title: String,
     pub artist: String,
     pub tracks: Vec<TrackInfo>,
+    /// The track to open on when the tab has no saved practice state (see
+    /// `Config::preferred_instrument`).
+    pub default_track: u32,
     pub bar_count: u32,
     pub played_bar_count: u32,
     pub duration_secs: f64,
@@ -599,6 +615,7 @@ pub struct TabSession {
     id: TabId,
     score: Score,
     timeline: Timeline,
+    default_track: u32,
     state: Mutex<SessionState>,
 }
 
@@ -610,6 +627,7 @@ impl TabSession {
             id,
             score,
             timeline,
+            default_track: 0,
             state: Mutex::new(SessionState {
                 layout: DisplayList::default(),
                 sync,
@@ -710,6 +728,7 @@ impl TabSession {
             title: self.score.title.clone(),
             artist: self.score.artist.clone(),
             tracks,
+            default_track: self.default_track,
             bar_count: self.score.master_bars.len() as u32,
             played_bar_count: self.timeline.played_bars().len() as u32,
             duration_secs: self.timeline.duration_secs(),
@@ -848,7 +867,7 @@ pub fn bar_points_sync(points: Vec<f64>) -> SyncSpec {
 
 #[cfg(test)]
 mod track_label_tests {
-    use super::track_label;
+    use super::{default_track, track_label};
     use crate::model::{Instrument, Track};
 
     fn track(name: &str, program: u8, tuning: &[u8]) -> Track {
@@ -891,6 +910,15 @@ mod track_label_tests {
             ..track("Drums", 0, &[0; 6])
         };
         assert_eq!(track_label(&[drums], 0), "Drums");
+    }
+
+    #[test]
+    fn default_track_prefers_the_instrument_else_the_first() {
+        let tracks = [track("Lead", 30, GUITAR), track("Bass", 34, BASS)];
+        assert_eq!(default_track(&tracks, None), 0);
+        assert_eq!(default_track(&tracks, Some(Instrument::Bass)), 1);
+        assert_eq!(default_track(&tracks, Some(Instrument::Guitar)), 0);
+        assert_eq!(default_track(&tracks, Some(Instrument::Drums)), 0);
     }
 
     #[test]

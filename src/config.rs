@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
 
+use crate::model::Instrument;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
 #[serde(default)]
 pub struct Config {
@@ -19,6 +21,8 @@ pub struct Config {
     pub watched_folders: Vec<String>,
     /// Keep the tab scrolled so the cursor stays in view.
     pub follow_cursor: bool,
+    /// The instrument a tab opens on the first time; `None` opens the first track.
+    pub preferred_instrument: Option<Instrument>,
 }
 
 impl Default for Config {
@@ -28,6 +32,7 @@ impl Default for Config {
             show_rhythm: true,
             watched_folders: Vec::new(),
             follow_cursor: true,
+            preferred_instrument: None,
         }
     }
 }
@@ -227,5 +232,12 @@ mod tests {
         std::fs::write(&path, "scale = 2.0\n").unwrap();
         assert_eq!(load(&path).scale, 2.0);
         assert!(load(&path).show_rhythm);
+        assert_eq!(load(&path).preferred_instrument, None);
+        let bass = Config {
+            preferred_instrument: Some(Instrument::Bass),
+            ..Default::default()
+        };
+        save(&path, &bass).unwrap();
+        assert_eq!(load(&path), bass);
     }
 }

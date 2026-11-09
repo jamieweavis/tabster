@@ -44,7 +44,8 @@ final class AppModel {
     // MARK: Settings
 
     /// Mirrors the core's config (`~/.config/tabster.toml`); change it through `updateConfig`.
-    private(set) var config = Config(scale: 1.0, showRhythm: true, watchedFolders: [], followCursor: true)
+    private(set) var config = Config(scale: 1.0, showRhythm: true, watchedFolders: [], followCursor: true,
+                                         preferredInstrument: nil)
 
     @ObservationIgnored private var query = ""
     @ObservationIgnored private var searchTask: Task<Void, Never>?

@@ -61,12 +61,23 @@ private struct GeneralSettings: View {
             Section("Viewer") {
                 Toggle("Follow the cursor while playing", isOn: configBinding(\.followCursor))
                 Toggle("Show rhythm notation", isOn: configBinding(\.showRhythm))
+                Picker("Open new tabs on", selection: configBinding(\.preferredInstrument)) {
+                    Text("First track").tag(Instrument?.none)
+                    ForEach(Self.instruments, id: \.0) { instrument, name in
+                        Text(name).tag(Instrument?.some(instrument))
+                    }
+                }
+                .help("The track a tab starts on the first time it's opened, when it has one for this instrument.")
             }
         }
         .formStyle(.grouped)
         .scrollDisabled(true)
         .fixedSize(horizontal: false, vertical: true)
     }
+
+    private static let instruments: [(Instrument, String)] = [
+        (.guitar, "Guitar"), (.bass, "Bass"), (.drums, "Drums"), (.keys, "Keys"),
+    ]
 
     private func configBinding<T>(_ keyPath: WritableKeyPath<Config, T>) -> Binding<T> {
         Binding(

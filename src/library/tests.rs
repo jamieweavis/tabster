@@ -484,7 +484,7 @@ fn delete_removes_row_and_files() {
         Err(LibraryError::NotFound)
     ));
     assert!(f.library.tags().unwrap().is_empty());
-    assert_eq!(f.library.practice_state(id).unwrap().track, 0);
+    assert_eq!(f.library.practice_state(id).unwrap(), None);
     assert!(f.library.get(keep).is_ok());
 
     // Re-importing the same content works again after a delete.
@@ -623,16 +623,7 @@ fn video_sync_round_trips() {
 fn practice_state() {
     let f = Fixture::new();
     let tab = f.add("a.gp", "Alpha|X|");
-    assert_eq!(
-        f.library.practice_state(tab).unwrap(),
-        PracticeState {
-            track: 0,
-            speed: 1.0,
-            loop_start_bar: None,
-            loop_end_bar: None,
-            last_position_secs: 0.0,
-        }
-    );
+    assert_eq!(f.library.practice_state(tab).unwrap(), None);
     let state = PracticeState {
         track: 2,
         speed: 0.75,
@@ -641,14 +632,14 @@ fn practice_state() {
         last_position_secs: 42.5,
     };
     f.library.set_practice_state(tab, &state).unwrap();
-    assert_eq!(f.library.practice_state(tab).unwrap(), state);
+    assert_eq!(f.library.practice_state(tab).unwrap(), Some(state.clone()));
     let cleared = PracticeState {
         loop_start_bar: None,
         loop_end_bar: None,
         ..state.clone()
     };
     f.library.set_practice_state(tab, &cleared).unwrap();
-    assert_eq!(f.library.practice_state(tab).unwrap(), cleared);
+    assert_eq!(f.library.practice_state(tab).unwrap(), Some(cleared));
     assert!(matches!(
         f.library.set_practice_state(999, &state),
         Err(LibraryError::NotFound)

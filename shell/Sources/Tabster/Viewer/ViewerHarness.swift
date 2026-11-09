@@ -109,7 +109,8 @@ private struct HarnessView: View {
                 guard let id = outcome?.id else {
                     throw HarnessError(message: outcome?.error ?? "import failed")
                 }
-                var state = try core.practiceState(tab: id)
+                var state = try core.practiceState(tab: id) ?? PracticeState(
+                    track: 0, speed: 1, loopStartBar: nil, loopEndBar: nil, lastPositionSecs: 0)
                 if let track { state.track = track }
                 if let seek { state.lastPositionSecs = seek }
                 if let loop, loop.count == 2 {

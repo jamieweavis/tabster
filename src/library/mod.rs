@@ -578,9 +578,9 @@ impl Library {
         found(changed)
     }
 
-    /// The saved state, or the default (first track, full speed, no loop, from the start).
-    pub fn practice_state(&self, tab: TabId) -> Result<PracticeState, LibraryError> {
-        let state = self
+    /// The tab's saved practice state; `None` if it has never been saved (a tab not yet opened).
+    pub fn practice_state(&self, tab: TabId) -> Result<Option<PracticeState>, LibraryError> {
+        Ok(self
             .reader
             .lock()
             .query_row(
@@ -597,11 +597,7 @@ impl Library {
                     })
                 },
             )
-            .optional()?;
-        Ok(state.unwrap_or(PracticeState {
-            speed: 1.0,
-            ..PracticeState::default()
-        }))
+            .optional()?)
     }
 
     pub fn set_practice_state(

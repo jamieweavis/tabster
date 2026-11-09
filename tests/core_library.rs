@@ -11,7 +11,8 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use tabster_core::config::{self, Config};
-use tabster_core::library::{TabFilter, TabId};
+use tabster_core::library::{PracticeState, TabFilter, TabId};
+use tabster_core::model::Instrument;
 use tabster_core::{Core, LibraryObserver};
 
 const TITLE_OFFSET: usize = 0x24;
@@ -125,6 +126,7 @@ fn config_round_trips_through_core() {
         show_rhythm: false,
         watched_folders: vec![dir.path().join("nowhere").to_string_lossy().into_owned()],
         follow_cursor: false,
+        preferred_instrument: Some(Instrument::Bass),
     };
     core.set_config(config.clone());
     assert_eq!(core.config(), config);
@@ -144,6 +146,37 @@ fn config_round_trips_through_core() {
     drop(core);
     assert_eq!(config::load(&config_path), newer);
     assert_eq!(core_in(dir.path()).config(), newer);
+}
+
+#[test]
+fn new_tabs_open_on_the_preferred_instrument() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_in(dir.path());
+    let path = write_variants(&dir.path().join("in"), 0..1).remove(0);
+    let id = core.import_paths(vec![path.to_string_lossy().into_owned()])[0]
+        .id
+        .unwrap();
+    // basics.gp5: track 0 is a guitar, track 1 a bass.
+    assert_eq!(core.open_tab(id).unwrap().info().default_track, 0);
+    core.set_config(Config {
+        preferred_instrument: Some(Instrument::Bass),
+        ..Default::default()
+    });
+    assert_eq!(core.practice_state(id).unwrap(), None);
+    assert_eq!(core.open_tab(id).unwrap().info().default_track, 1);
+    core.set_config(Config {
+        preferred_instrument: Some(Instrument::Drums),
+        ..Default::default()
+    });
+    assert_eq!(core.open_tab(id).unwrap().info().default_track, 0);
+    // Once opened, the saved state decides.
+    let state = PracticeState {
+        track: 0,
+        speed: 1.0,
+        ..Default::default()
+    };
+    core.set_practice_state(id, state.clone()).unwrap();
+    assert_eq!(core.practice_state(id).unwrap(), Some(state));
 }
 
 #[test]
