@@ -100,6 +100,33 @@ final class YouTubePlayerController {
         loadPage()
     }
 
+    // MARK: Reuse
+
+    /// A closed viewer's player, kept for the next one: a new WKWebView launches a web content
+    /// process (~60 ms on the main thread) and has to load the IFrame API again.
+    private static var spare: YouTubePlayerController?
+
+    /// The spare player if there is one for this core, else a new one.
+    static func reusable(core: Core?) -> YouTubePlayerController {
+        if let spare, spare.core === core {
+            Self.spare = nil
+            return spare
+        }
+        return YouTubePlayerController(core: core)
+    }
+
+    /// The owner is done with this player: pause it and keep it as the spare (unless it failed,
+    /// in which case a fresh page is the better start).
+    func recycle() {
+        onStateChange = nil
+        onFailure = nil
+        onSample = nil
+        onEvent = nil
+        guard failure == nil else { return }
+        pause()
+        Self.spare = self
+    }
+
     // MARK: Commands
 
     /// Load (or switch to) a video. It starts playing only if `autoplay`.

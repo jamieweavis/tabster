@@ -111,7 +111,7 @@ extension TabViewerModel {
 
     private func ensurePlayer() -> YouTubePlayerController {
         if let player { return player }
-        let player = YouTubePlayerController(core: core)
+        let player = YouTubePlayerController.reusable(core: core)
         if startMuted { player.setMuted(true) }
         player.onStateChange = { [weak self] state in self?.playerStateChanged(state) }
         player.onFailure = { [weak self] failure in self?.playerFailed(failure) }

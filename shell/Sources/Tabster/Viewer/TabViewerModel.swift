@@ -631,6 +631,11 @@ final class TabViewerModel {
         resizeTask?.cancel()
         flushSyncSave(synchronously: synchronously)
         save(synchronously: synchronously)
+        // Last: saving above reads the position from the video clock.
+        if !synchronously, let player {
+            player.recycle()
+            self.player = nil
+        }
     }
 
     /// Called by the canvas after the first draw of the first layout.
