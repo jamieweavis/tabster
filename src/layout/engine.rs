@@ -15,6 +15,7 @@ use super::{
 };
 use crate::model::{
     Bar, Beat, Direction, MasterBar, Note, Score, Section, Slide, TICKS_PER_QUARTER, Track, Voice,
+    note_name,
 };
 
 /// Approximate advance width of one character, as a fraction of the font size.
@@ -840,6 +841,17 @@ impl SystemEmitter<'_> {
             let y = r.staff_top + (m.staff_h - h) / 2.0;
             self.out.rect(cx - 4.0 * s, y, 2.5 * s, h, Ink::Primary);
             self.out.rect(cx + 1.5 * s, y, 2.5 * s, h, Ink::Primary);
+        } else if !self.ctx.no_tab && self.ctx.track.tuning.len() == m.lines {
+            // Each string's open note, on its line.
+            let size = (m.ls * 0.8).min(11.0 * s);
+            for (k, &pitch) in self.ctx.track.tuning.iter().enumerate() {
+                let name = note_name(pitch);
+                let y = r.staff_top + k as f32 * m.ls;
+                let w = text_width(name.len(), size) + 3.0 * s;
+                self.out.knockout(cx, y, w, size);
+                self.out
+                    .text(cx, y, name, size, PLAIN, TextAnchor::Center, Ink::Secondary);
+            }
         } else if m.lines >= 3 {
             let size = (m.staff_h / 3.6).min(15.0 * s);
             for (k, letter) in ["T", "A", "B"].into_iter().enumerate() {

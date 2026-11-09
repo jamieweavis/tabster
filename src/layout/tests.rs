@@ -631,7 +631,7 @@ fn notes_have_knockouts_and_labels() {
         "D.S. al Coda",
         "Segno",
         "C",
-        "T",
+        "G",
     ] {
         assert!(texts.contains(&expected), "missing {expected:?}");
     }
