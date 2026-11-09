@@ -16,10 +16,10 @@ struct ContentView: View {
                 } actions: {
                     Button("Quit Tabster") { NSApp.terminate(nil) }
                 }
+                .frame(minWidth: LibraryView.detailMinWidth)
             }
         }
-        // The tab pane's minimum; the list adds its own (240) when shown.
-        .frame(minWidth: 760, minHeight: 650)
+        .frame(minHeight: 560)
     }
 }
 
@@ -33,6 +33,15 @@ struct LibraryView: View {
     /// Shared with `TabViewer`'s toggle: with the player bar hidden, its title and artist head the window.
     @AppStorage("viewer.showPlayer") private var showPlayer = true
 
+    /// The tab pane's and the list's minimum widths. The window's minimum is set from them
+    /// explicitly: left to the split view, the window shrinks past the list's share and both
+    /// panes are cropped.
+    static let detailMinWidth: CGFloat = 760
+    static let listMinWidth: CGFloat = 240
+    /// The list's current width (with the divider). The split view doesn't narrow the list as the
+    /// window shrinks, so the window's minimum keeps room for all of it.
+    @State private var listWidth = listMinWidth
+
     /// The open tab's title and artist, for the header while the player bar is hidden.
     private var headerCaption: OpenTabCaption? {
         guard !showPlayer, let open = model.openTab, open.tabID == model.selection else { return nil }
@@ -43,7 +52,7 @@ struct LibraryView: View {
         @Bindable var model = model
         NavigationSplitView(columnVisibility: $columnVisibility) {
             TabTable()
-                .navigationSplitViewColumnWidth(min: 240, ideal: 600)
+                .navigationSplitViewColumnWidth(min: Self.listMinWidth, ideal: 600)
                 .toolbar {
                     // Heads the list; goes with it when it's hidden (the window's title takes over).
                     if !listHidden {
@@ -67,10 +76,11 @@ struct LibraryView: View {
                     .toolbar(removing: .title)
                 }
             }
-            .frame(minWidth: 760)
+            .frame(minWidth: Self.detailMinWidth)
         }
+        .frame(minWidth: listHidden ? Self.detailMinWidth : Self.detailMinWidth + max(listWidth, Self.listMinWidth))
         // Hiding the list shrinks the window instead of widening the tab pane.
-        .background(SidebarWindowResizer(sidebarHidden: listHidden))
+        .background(SidebarWindowResizer(sidebarHidden: listHidden) { listWidth = $0 })
         .toolbar {
             // Centred: "Tabster" (list hidden) over the open tab's title and artist (player hidden).
             if listHidden || headerCaption != nil {

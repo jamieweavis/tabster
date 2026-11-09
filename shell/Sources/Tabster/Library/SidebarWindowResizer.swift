@@ -7,9 +7,13 @@ import SwiftUI
 /// `NSSplitView` behind it. Place as a background of the `NavigationSplitView`.
 struct SidebarWindowResizer: NSViewRepresentable {
     var sidebarHidden: Bool
+    /// Told the sidebar's width (plus the divider) whenever it changes while open, so the window's
+    /// minimum can keep room for it: the split view won't narrow the sidebar to fit the window.
+    var onSidebarWidth: (CGFloat) -> Void = { _ in }
 
     func makeNSView(context: Context) -> Probe { Probe() }
     func updateNSView(_ view: Probe, context: Context) {
+        view.onSidebarWidth = onSidebarWidth
         view.update(sidebarHidden: sidebarHidden)
     }
 
@@ -20,6 +24,7 @@ struct SidebarWindowResizer: NSViewRepresentable {
         /// The sidebar's width (plus the divider) when last seen open: what hiding it gives back
         /// and what showing it takes again.
         private var sidebarWidth: CGFloat = 0
+        var onSidebarWidth: (CGFloat) -> Void = { _ in }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -76,7 +81,11 @@ struct SidebarWindowResizer: NSViewRepresentable {
             guard sidebarHidden != true, let split = splitView, let sidebar = split.arrangedSubviews.first,
                   !split.isSubviewCollapsed(sidebar), sidebar.frame.width > 0
             else { return }
-            sidebarWidth = sidebar.frame.width + split.dividerThickness
+            let width = sidebar.frame.width + split.dividerThickness
+            guard width != sidebarWidth else { return }
+            sidebarWidth = width
+            // Not mid-layout: this changes SwiftUI state.
+            DispatchQueue.main.async { [weak self] in self?.onSidebarWidth(width) }
         }
 
         /// The window's first `NSSplitView`, searched breadth-first: the one holding the sidebar.
