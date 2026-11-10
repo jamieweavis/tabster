@@ -19,7 +19,7 @@ struct ContentView: View {
                 .frame(minWidth: LibraryView.detailMinWidth)
             }
         }
-        .frame(minHeight: 560)
+        .frame(minHeight: 480)
     }
 }
 
