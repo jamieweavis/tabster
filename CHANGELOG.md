@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/jamieweavis/tabster/compare/v0.1.0...v0.1.1) - 2026-11-10
+
+### Added
+
+- reduce the main window's minimum height to 480
+
+### Other
+
+- add a screenshot to the README and tighten the feature list
+- skip cargo-semver-checks in release-plz
+- release v0.1.0
+
 ## [0.1.0](https://github.com/jamieweavis/tabster/releases/tag/v0.1.0) - 2026-11-09
 
 ### Added
