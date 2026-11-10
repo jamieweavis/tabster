@@ -1,8 +1,10 @@
 <div align="center">
 
+<img src=".github/screenshot.png" alt="Tabster screenshot" width="800">
+
 # Tabster
 
-Native macOS Guitar Pro tab player that plays along in sync with YouTube.
+Native macOS Guitar Pro tab player that plays along in sync with YouTube for audio.
 
 [![Build](https://github.com/jamieweavis/tabster/actions/workflows/build.yml/badge.svg)](https://github.com/jamieweavis/tabster/actions/workflows/build.yml)
 [![Latest release](https://img.shields.io/github/v/release/jamieweavis/tabster?label=release&color=f97316)](https://github.com/jamieweavis/tabster/releases/latest)
@@ -14,17 +16,14 @@ Native macOS Guitar Pro tab player that plays along in sync with YouTube.
 
 </div>
 
----
-
 ## Features
 
 - **Your library**: import `.gp` (Guitar Pro 7/8), `.gpx` (Guitar Pro 6) and `.gp5` files or whole folders, then search, favourite, tag and group them into setlists
 - **Watched folders**: point Tabster at a folder and new tabs are imported automatically
-- **Fast, clean viewer**: rhythm, techniques, sections, multi-bar rests and drums, with a smooth playback cursor, click to seek, track switching and zoom
-- **Practice tools**: loop a passage, slow it down, and keep time with the metronome
+- **Practice tools**: loop, adjust the tempo, and use the metronome
 - **YouTube sync**: attach any embeddable YouTube video to a tab and the cursor follows the recording
 - **Tab audio**: no video? Hear the tab itself through a built-in General MIDI synth
-- **Private by design**: no account and no cloud. Your tabs never leave your Mac
+- **Private by design**: no account and no cloud
 - **Native and lightweight**: a Rust core with a SwiftUI shell, not a web view in a wrapper
 
 ### Syncing a video
