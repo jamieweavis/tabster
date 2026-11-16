@@ -1,18 +1,18 @@
 <div align="center">
 
-<img src=".github/screenshot.png" alt="Tabster screenshot" width="800">
-
 # Tabster
 
 Native macOS Guitar Pro tab player that plays along in sync with YouTube for audio.
 
 [![Build](https://github.com/jamieweavis/tabster/actions/workflows/build.yml/badge.svg)](https://github.com/jamieweavis/tabster/actions/workflows/build.yml)
+[![Downloads](https://img.shields.io/github/downloads/jamieweavis/tabster/total.svg)](https://github.com/jamieweavis/tabster/releases)
 [![Latest release](https://img.shields.io/github/v/release/jamieweavis/tabster?label=release&color=f97316)](https://github.com/jamieweavis/tabster/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/jamieweavis/tabster/total?color=f97316)](https://github.com/jamieweavis/tabster/releases)
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey)
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
 
 [**Download**](#download) · [Features](#features) · [Usage](#usage) · [Development](#development)
+
+<img src=".github/screenshot.png" alt="Tabster screenshot" width="800">
 
 </div>
 
