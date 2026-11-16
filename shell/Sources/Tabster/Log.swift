@@ -18,6 +18,7 @@ extension Error {
         case .Library(let message): return message
         case .InvalidVideo(let message): return message
         case .NotFound: return "The tab is no longer in the library."
+        case .Search(let message): return message
         }
     }
 }

@@ -69,6 +69,17 @@ private struct GeneralSettings: View {
                 }
                 .help("The track a tab starts on the first time it's opened, when it has one for this instrument.")
             }
+
+            Section {
+                Toggle("Find videos for new tabs", isOn: configBinding(\.autoFindVideos))
+                Toggle("Attach the best match when it's a confident one", isOn: configBinding(\.autoAttachVideos))
+            } header: {
+                Text("YouTube")
+            } footer: {
+                Text("Searches YouTube for each imported tab's artist and title, and ranks the results by title, channel, version and how close their length is to the tab's. Right-click tabs to search again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .scrollDisabled(true)

@@ -1,0 +1,99 @@
+{
+  "responseContext": {},
+  "estimatedResults": "1234",
+  "contents": {
+    "twoColumnSearchResultsRenderer": {
+      "primaryContents": {
+        "sectionListRenderer": {
+          "contents": [
+            {
+              "itemSectionRenderer": {
+                "contents": [
+                  {
+                    "adSlotRenderer": {
+                      "videoRenderer": { "videoId": "AAAAAAAAAAA", "title": { "simpleText": "An advert" } }
+                    }
+                  },
+                  {
+                    "videoRenderer": {
+                      "videoId": "abcdefghijk",
+                      "title": { "runs": [{ "text": "Example Song" }, { "text": " (Remastered)" }] },
+                      "ownerText": { "runs": [{ "text": "The Examples" }] },
+                      "lengthText": { "simpleText": "4:05" },
+                      "viewCountText": { "simpleText": "1,234,567 views" },
+                      "ownerBadges": [
+                        { "metadataBadgeRenderer": { "style": "BADGE_STYLE_TYPE_VERIFIED_ARTIST", "tooltip": "Official Artist Channel" } }
+                      ],
+                      "detailedMetadataSnippets": [
+                        { "snippetText": { "runs": [{ "text": "Provided to YouTube by " }, { "text": "Example Records" }] } }
+                      ],
+                      "thumbnailOverlays": [{ "thumbnailOverlayTimeStatusRenderer": { "style": "DEFAULT" } }]
+                    }
+                  },
+                  {
+                    "shelfRenderer": {
+                      "content": {
+                        "verticalListRenderer": {
+                          "items": [
+                            {
+                              "videoRenderer": {
+                                "videoId": "lmnopqrstuv",
+                                "title": { "runs": [{ "text": "The Examples - Example Song (Live)" }] },
+                                "longBylineText": { "runs": [{ "text": "Fan Uploads" }] },
+                                "lengthText": { "simpleText": "1:02:03" },
+                                "viewCountText": { "simpleText": "No views" },
+                                "ownerBadges": [
+                                  { "metadataBadgeRenderer": { "style": "BADGE_STYLE_TYPE_VERIFIED" } }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "videoRenderer": {
+                      "videoId": "abcdefghijk",
+                      "title": { "simpleText": "A duplicate of the first" }
+                    }
+                  },
+                  {
+                    "videoRenderer": {
+                      "videoId": "livestream1",
+                      "title": { "simpleText": "24/7 radio" },
+                      "badges": [{ "metadataBadgeRenderer": { "style": "BADGE_STYLE_TYPE_LIVE_NOW", "label": "LIVE" } }]
+                    }
+                  },
+                  {
+                    "videoRenderer": {
+                      "videoId": "premiere123",
+                      "title": { "simpleText": "Coming soon" },
+                      "upcomingEventData": { "startTime": "1800000000" }
+                    }
+                  },
+                  {
+                    "videoRenderer": {
+                      "videoId": "shortshorts",
+                      "title": { "simpleText": "A Short" },
+                      "thumbnailOverlays": [{ "thumbnailOverlayTimeStatusRenderer": { "style": "SHORTS" } }]
+                    }
+                  },
+                  { "videoRenderer": { "videoId": "not a valid id", "title": { "simpleText": "Bad id" } } },
+                  { "videoRenderer": { "videoId": "notitle0000" } },
+                  {
+                    "videoRenderer": {
+                      "videoId": "minimal0000",
+                      "title": { "simpleText": "  Minimal  " }
+                    }
+                  },
+                  { "channelRenderer": { "channelId": "UC123", "title": { "simpleText": "A channel" } } }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

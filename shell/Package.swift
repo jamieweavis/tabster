@@ -15,6 +15,7 @@ let package = Package(
             linkerSettings: [
                 .linkedLibrary("tabster_core"),
                 .linkedFramework("CoreServices"),  // notify (FSEvents)
+                .linkedFramework("Security"),  // native-tls (YouTube search over HTTPS)
             ]
         ),
         // Pure Swift logic with no FFI or UI dependency (e.g. the video clock), so it can be unit-tested.

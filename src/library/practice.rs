@@ -226,7 +226,7 @@ mod tests {
             .lock()
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, schema::latest_version());
         // Old data survives; the new tables work.
         assert_eq!(library.get(tab).unwrap().title, "Old");
         assert_eq!(

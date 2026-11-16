@@ -37,6 +37,15 @@ struct TabViewer: View {
                 ContentUnavailableView("Couldn't Open Tab", systemImage: "exclamationmark.triangle",
                                        description: Text(message))
             } else {
+                if model.videos.isEmpty, let suggestion = model.videoSuggestion {
+                    VideoSuggestionBar(
+                        match: suggestion,
+                        onUse: { model.attachVideo(suggestion.candidate, label: suggestion.label) },
+                        onBrowse: { model.showVideoFinder = true },
+                        onDismiss: { model.dismissVideoSuggestion() }
+                    )
+                    Divider()
+                }
                 if model.syncEditing, model.selectedVideo != nil {
                     SyncPane(model: model)
                     Divider()
@@ -80,8 +89,13 @@ struct TabViewer: View {
         .toolbar(removing: .title)
         .toolbar { ViewerToolbar(model: model, app: app, showPlayer: $showPlayer) }
         .modifier(LoopPromptModifier(model: model, prompt: $loopPrompt))
-        .sheet(isPresented: Binding(get: { model.showAttachSheet }, set: { model.showAttachSheet = $0 })) {
-            VideoAttachSheet(onAttach: { id, label in model.addVideo(youtubeID: id, label: label) })
+        .sheet(isPresented: Binding(get: { model.showVideoFinder }, set: { model.showVideoFinder = $0 })) {
+            VideoFinderSheet(
+                core: core,
+                tabID: tabID,
+                onAttachMatch: { video, label in model.attachVideo(video, label: label) },
+                onAttachID: { id, label in model.addVideo(youtubeID: id, label: label) }
+            )
         }
         .sheet(isPresented: Binding(get: { model.showPointsSheet }, set: { model.showPointsSheet = $0 })) {
             BarPointsSheet(videoID: model.selectedVideo?.youtubeId,
@@ -102,6 +116,9 @@ struct TabViewer: View {
             model.close()
             // A new viewer may already have published its own.
             if app?.openTab?.tabID == tabID { app?.openTab = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .videoSearchFinished)) { note in
+            if note.object as? Int64 == tabID { model.videoSearchFinished() }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             model.close(synchronously: true)

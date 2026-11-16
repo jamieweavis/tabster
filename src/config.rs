@@ -23,6 +23,10 @@ pub struct Config {
     pub follow_cursor: bool,
     /// The instrument a tab opens on the first time; `None` opens the first track.
     pub preferred_instrument: Option<Instrument>,
+    /// Search YouTube for each newly imported tab's song.
+    pub auto_find_videos: bool,
+    /// Attach the video a search is confident about without asking.
+    pub auto_attach_videos: bool,
 }
 
 impl Default for Config {
@@ -33,6 +37,8 @@ impl Default for Config {
             watched_folders: Vec::new(),
             follow_cursor: true,
             preferred_instrument: None,
+            auto_find_videos: true,
+            auto_attach_videos: true,
         }
     }
 }

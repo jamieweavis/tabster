@@ -22,8 +22,9 @@ Native macOS Guitar Pro tab player that plays along in sync with YouTube for aud
 - **Watched folders**: point Tabster at a folder and new tabs are imported automatically
 - **Practice tools**: loop, adjust the tempo, and use the metronome
 - **YouTube sync**: attach any embeddable YouTube video to a tab and the cursor follows the recording
+- **Finds the video for you**: new tabs are matched to YouTube by artist, title, channel, version and length, and a confident match is attached automatically
 - **Tab audio**: no video? Hear the tab itself through a built-in General MIDI synth
-- **Private by design**: no account and no cloud
+- **Private by design**: no account and no cloud. Your tabs stay on your Mac; YouTube only sees what it needs to search for and play a video
 - **Native and lightweight**: a Rust core with a SwiftUI shell, not a web view in a wrapper
 
 ### Syncing a video
@@ -35,6 +36,25 @@ Recordings rarely match the tab's tempo exactly, so Tabster gives you three ways
 | **Offset** | Tap once on bar 1, then nudge. Good for studio recordings that keep to the click |
 | **Offset + stretch** | Recordings that drift at a steady rate from the tab's tempo |
 | **Per-bar sync points** | Live takes and anything with tempo changes. Tap along, drag markers, or import Guitar Pro 8 sync points |
+
+### Finding the video
+
+When you import a tab, Tabster searches YouTube for its artist and title in the background and ranks what it finds:
+
+- **Title and artist**: matched against the video title and channel, forgiving typos, accents, "feat." credits and "Artist - Title" naming
+- **Length**: compared with the tab's own length. A video shorter than the tab counts heavily against it; a slightly longer one, which may just have an intro, counts only a little
+- **Channel**: the artist's official audio, Topic channel or verified channel is preferred over re-uploads
+- **Version**: covers, lessons, playthroughs, backing tracks, reactions, remixes, full albums, and live or acoustic takes are marked down, unless the tab's title asks for that version (e.g. "Song (Live)")
+
+What happens next depends on how sure it is:
+
+| Confidence | What Tabster does |
+| --- | --- |
+| **Best match**: title, artist and length all agree | Attaches the video straight away |
+| **Likely** | Asks "Is this the video for this tab?" in the viewer |
+| **Unsure** | Leaves the tab alone. Search again any time |
+
+To search yourself, choose **Find on YouTube…** in the viewer's video menu, or right-click tabs in the library and choose **Find YouTube Video**. Results are listed best first, each with the reasons it ranked where it did, and you can paste a YouTube link instead. Both automatic searching and automatic attaching can be turned off under **Settings › YouTube**.
 
 ## Download
 
@@ -55,7 +75,7 @@ Grab the latest build from the [**releases page**](https://github.com/jamieweavi
 
 1. Launch **Tabster** and drop some Guitar Pro files (or a folder of them) onto the library window, or use **File › Import** (⌘O).
 2. Open a tab and press play to hear it through the built-in synth.
-3. To play along with a recording, attach a YouTube video to the tab and sync it from the viewer.
+3. To play along with a recording, sync the tab to its YouTube video from the viewer. Tabster usually finds the video by itself (see [Finding the video](#finding-the-video)); otherwise use **Find on YouTube…** in the video menu.
 
 Tabs are stored in `~/Library/Application Support/Tabster` and settings in `~/.config/tabster.toml`.
 

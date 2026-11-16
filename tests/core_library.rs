@@ -13,7 +13,17 @@ use parking_lot::Mutex;
 use tabster_core::config::{self, Config};
 use tabster_core::library::{PracticeState, TabFilter, TabId};
 use tabster_core::model::Instrument;
+use tabster_core::video_search::{SearchError, Searcher, VideoCandidate};
 use tabster_core::{Core, LibraryObserver};
+
+/// Video searches fail at once: tests never reach YouTube.
+struct Offline;
+
+impl Searcher for Offline {
+    fn search(&self, _query: &str) -> Result<Vec<VideoCandidate>, SearchError> {
+        Err(SearchError::Network("offline".into()))
+    }
+}
 
 const TITLE_OFFSET: usize = 0x24;
 const TITLE_LEN: usize = 14;
@@ -44,7 +54,13 @@ fn write_variants(dir: &Path, range: std::ops::Range<usize>) -> Vec<PathBuf> {
 }
 
 fn core_in(dir: &Path) -> Arc<Core> {
-    Core::with_paths(&dir.join("data"), &dir.join("tabster.toml")).unwrap()
+    Core::with_searcher(
+        &dir.join("data"),
+        &dir.join("tabster.toml"),
+        Arc::new(Offline),
+        Duration::ZERO,
+    )
+    .unwrap()
 }
 
 fn tab_count(core: &Core) -> usize {
@@ -77,6 +93,7 @@ impl LibraryObserver for Recorder {
         self.changed.fetch_add(1, Ordering::SeqCst);
     }
     fn tab_opened(&self, _id: TabId) {}
+    fn video_search_finished(&self, _tab: TabId) {}
 }
 
 #[test]
@@ -127,6 +144,8 @@ fn config_round_trips_through_core() {
         watched_folders: vec![dir.path().join("nowhere").to_string_lossy().into_owned()],
         follow_cursor: false,
         preferred_instrument: Some(Instrument::Bass),
+        auto_find_videos: false,
+        auto_attach_videos: false,
     };
     core.set_config(config.clone());
     assert_eq!(core.config(), config);

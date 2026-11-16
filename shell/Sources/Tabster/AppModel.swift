@@ -45,7 +45,7 @@ final class AppModel {
 
     /// Mirrors the core's config (`~/.config/tabster.toml`); change it through `updateConfig`.
     private(set) var config = Config(scale: 1.0, showRhythm: true, watchedFolders: [], followCursor: true,
-                                         preferredInstrument: nil)
+                                         preferredInstrument: nil, autoFindVideos: true, autoAttachVideos: true)
 
     @ObservationIgnored private var query = ""
     @ObservationIgnored private var searchTask: Task<Void, Never>?
@@ -180,6 +180,17 @@ final class AppModel {
         if let selection, ids.contains(selection) { self.selection = nil }
     }
 
+    /// Search YouTube for these tabs' videos in the background (confident matches are attached).
+    func findVideos(_ ids: Set<Int64>) {
+        Logger.library.info("finding videos for \(ids.count) tab(s)")
+        perform { core in try core.findVideos(tabs: Array(ids)) }
+    }
+
+    fileprivate func videoSearchFinished(_ tab: Int64) {
+        reloadTabs()
+        NotificationCenter.default.post(name: .videoSearchFinished, object: tab)
+    }
+
     func filePath(_ id: Int64) -> URL? {
         guard let core else { return nil }
         do {
@@ -238,6 +249,12 @@ final class LibraryObserverBridge: LibraryObserver {
         }
     }
 
+    func videoSearchFinished(tab: Int64) {
+        DispatchQueue.main.async { [weak model] in
+            MainActor.assumeIsolated { model?.videoSearchFinished(tab) }
+        }
+    }
+
     /// Only "last opened" changed, which the table shows only as the Recently Opened order.
     func tabOpened(id: Int64) {
         DispatchQueue.main.async { [weak model] in
@@ -246,6 +263,11 @@ final class LibraryObserverBridge: LibraryObserver {
             }
         }
     }
+}
+
+extension Notification.Name {
+    /// A tab's background video search finished; `object` is the tab id (`Int64`).
+    static let videoSearchFinished = Notification.Name("TabsterVideoSearchFinished")
 }
 
 /// What the window header shows for the open tab while the player bar is hidden.

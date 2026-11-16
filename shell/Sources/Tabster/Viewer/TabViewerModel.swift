@@ -91,7 +91,12 @@ final class TabViewerModel {
     var usingVideoClock = false
     /// The sync editor (nudge bar, ruler) is open.
     var syncEditing = false
-    var showAttachSheet = false
+    /// The Find a YouTube Video sheet.
+    var showVideoFinder = false
+    /// A video the background search found but didn't attach, offered while the tab has none.
+    var videoSuggestion: VideoMatch?
+    /// A background video search for this tab is queued or running.
+    var findingVideo = false
     var showPointsSheet = false
     /// Bumped on every sync change, so views that draw the sync (the ruler) refresh.
     var syncRevision = 0

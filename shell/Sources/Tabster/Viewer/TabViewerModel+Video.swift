@@ -20,6 +20,60 @@ extension TabViewerModel {
         if let video = list.first(where: \.isDefault) ?? list.first {
             select(video)
         }
+        loadVideoSearch()
+    }
+
+    // MARK: - Finding videos
+
+    /// Read the tab's background video search: still running, or a suggestion to offer.
+    func loadVideoSearch() {
+        let search: VideoSearch?
+        do {
+            search = try core.videoSearch(tab: tabID)
+        } catch {
+            ViewerLog.log.error("Loading the video search failed: \(error)")
+            return
+        }
+        findingVideo = search?.state == .pending
+        if let search, search.state == .done, !search.dismissed, search.attachedYoutubeId == nil,
+           let best = search.results.first, best.confidence != .low {
+            videoSuggestion = best
+        } else {
+            videoSuggestion = nil
+        }
+    }
+
+    /// The background search for this tab finished; it may have attached a video.
+    func videoSearchFinished() {
+        let hadVideos = !videos.isEmpty
+        reloadVideos()
+        loadVideoSearch()
+        if !hadVideos, selectedVideoID == nil, let video = videos.first(where: \.isDefault) ?? videos.first {
+            ViewerLog.log.info("A video search attached \(video.youtubeId, privacy: .public)")
+            select(video)
+        }
+    }
+
+    /// Attach a search result (from the finder sheet or the suggestion) and play it.
+    func attachVideo(_ candidate: VideoCandidate, label: String) {
+        do {
+            let id = try core.attachVideo(tab: tabID, video: candidate, label: label)
+            reloadVideos()
+            videoSuggestion = nil
+            if let video = videos.first(where: { $0.id == id }) { chooseVideo(video) }
+        } catch {
+            ViewerLog.log.error("Attaching video failed: \(error)")
+        }
+    }
+
+    /// Stop offering the suggestion (for good: automatic searches leave the tab alone).
+    func dismissVideoSuggestion() {
+        do {
+            try core.dismissVideoSuggestions(tab: tabID)
+        } catch {
+            ViewerLog.log.error("Dismissing the video suggestion failed: \(error)")
+        }
+        videoSuggestion = nil
     }
 
     func select(_ video: Video) {
@@ -46,6 +100,7 @@ extension TabViewerModel {
         do {
             let id = try core.addVideo(tab: tabID, urlOrId: youtubeID, label: label)
             reloadVideos()
+            videoSuggestion = nil
             if let video = videos.first(where: { $0.id == id }) {
                 if videos.count == 1 { try? core.setDefaultVideo(id: id) }
                 chooseVideo(video)

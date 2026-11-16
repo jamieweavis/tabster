@@ -14,10 +14,12 @@ pub mod playback;
 pub mod player_server;
 pub mod sync;
 pub mod timeline;
+pub mod video_search;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use parking_lot::{Mutex, RwLock};
@@ -27,13 +29,16 @@ use crate::import::ScanIndex;
 use crate::layout::{Cursor, DisplayList, LayoutOptions};
 use crate::library::{
     FolderWatcher, ImportOutcome, Library, LibraryError, PracticeState, PracticeStats, SavedLoop,
-    Setlist, TabFilter, TabId, TabSummary, Video, VideoId,
+    Setlist, TabFilter, TabId, TabSummary, Video, VideoId, VideoSearch,
 };
 use crate::model::Score;
 use crate::playback::{SynthError, TabSynth};
 use crate::player_server::PlayerServer;
 use crate::sync::{SyncMap, SyncPoint, SyncSpec};
 use crate::timeline::Timeline;
+use crate::video_search::client::Searcher;
+use crate::video_search::finder::{FinderHost, VideoFinder};
+use crate::video_search::{Song, VideoCandidate, VideoMatch, YouTubeClient};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 #[uniffi(flat_error)]
@@ -44,6 +49,8 @@ pub enum CoreError {
     InvalidVideo,
     #[error("not found")]
     NotFound,
+    #[error("{0}")]
+    Search(String),
 }
 
 impl From<LibraryError> for CoreError {
@@ -63,10 +70,15 @@ pub trait LibraryObserver: Send + Sync {
     /// A tab was opened, which only changes its "last opened" time: a list needs reloading only
     /// if it's sorted by that.
     fn tab_opened(&self, id: TabId);
+    /// A tab's video search finished or failed (`Core::video_search` has the outcome). It may
+    /// have attached a video.
+    fn video_search_finished(&self, tab: TabId);
 }
 
 /// How long config changes must settle before they're written.
 const CONFIG_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
+/// The least time between two YouTube searches.
+const SEARCH_INTERVAL: Duration = Duration::from_millis(1500);
 
 #[derive(uniffi::Object)]
 pub struct Core {
@@ -83,6 +95,9 @@ struct Shared {
     library: Library,
     observer: RwLock<Option<Arc<dyn LibraryObserver>>>,
     scan_index: Mutex<ScanIndex>,
+    finder: VideoFinder,
+    /// `Config::auto_find_videos`, for imports (which don't see the config).
+    auto_find_videos: AtomicBool,
 }
 
 struct Watched {
@@ -135,6 +150,7 @@ impl Core {
             *current = config.clone();
             changed
         };
+        self.shared.apply_video_settings(&config);
         self.saver.save(config);
         if folders_changed {
             let added = self.apply_watched_folders();
@@ -273,6 +289,69 @@ impl Core {
         Ok(self.shared.library.set_video_sync(id, &sync)?)
     }
 
+    /// Search YouTube for these tabs' videos in the background, ahead of automatic searches.
+    /// A confident match is attached to a tab with no video (if `Config::auto_attach_videos`);
+    /// otherwise the results wait in `video_search`. Each tab reports through
+    /// `LibraryObserver::video_search_finished`.
+    pub fn find_videos(&self, tabs: Vec<TabId>) -> Result<(), CoreError> {
+        let mut queued = Vec::with_capacity(tabs.len());
+        for tab in tabs {
+            if self.shared.library.queue_video_search(tab, true)? {
+                queued.push(tab);
+            }
+        }
+        self.shared.finder.enqueue(&self.shared, &queued, true);
+        self.changed();
+        Ok(())
+    }
+
+    /// The tab's last video search, if it has had one.
+    pub fn video_search(&self, tab: TabId) -> Result<Option<VideoSearch>, CoreError> {
+        Ok(self.shared.library.video_search(tab)?)
+    }
+
+    /// Search YouTube now for `query` (blocking: call from a background task), ranking the
+    /// results against the tab. An empty query searches for the tab's artist and title.
+    pub fn search_videos(&self, tab: TabId, query: String) -> Result<Vec<VideoMatch>, CoreError> {
+        let summary = self.shared.library.get(tab)?;
+        let song = Song::new(
+            &summary.title,
+            &summary.artist,
+            summary.duration_secs,
+            &query,
+        );
+        self.shared
+            .finder
+            .search(&song, &query)
+            .map_err(|e| CoreError::Search(e.to_string()))
+    }
+
+    /// What `search_videos` searches for when given no query: "Artist Title".
+    pub fn video_query(&self, tab: TabId) -> Result<String, CoreError> {
+        let summary = self.shared.library.get(tab)?;
+        Ok(Song::new(&summary.title, &summary.artist, summary.duration_secs, "").query())
+    }
+
+    /// Attach a search result, keeping its YouTube title, channel and length.
+    pub fn attach_video(
+        &self,
+        tab: TabId,
+        video: VideoCandidate,
+        label: String,
+    ) -> Result<VideoId, CoreError> {
+        library::parse_youtube_id(&video.youtube_id).ok_or(CoreError::InvalidVideo)?;
+        let id = video_search::finder::attach(&self.shared.library, tab, &video, &label)?;
+        self.changed();
+        Ok(id)
+    }
+
+    /// Stop suggesting videos for the tab; automatic searches leave it alone from now on.
+    pub fn dismiss_video_suggestions(&self, tab: TabId) -> Result<(), CoreError> {
+        self.shared.library.dismiss_video_search(tab)?;
+        self.changed();
+        Ok(())
+    }
+
     /// The tab's saved practice state; `None` until it's first saved (a tab never opened), when
     /// the viewer starts on `TabInfo::default_track`.
     pub fn practice_state(&self, tab: TabId) -> Result<Option<PracticeState>, CoreError> {
@@ -343,13 +422,33 @@ impl Core {
     /// Open the library in `data_dir` with the config at `config_path`, start watching the
     /// configured folders, and scan them for new files in the background.
     pub fn with_paths(data_dir: &Path, config_path: &Path) -> Result<Arc<Self>, CoreError> {
+        Self::with_searcher(
+            data_dir,
+            config_path,
+            Arc::new(YouTubeClient::new()),
+            SEARCH_INTERVAL,
+        )
+    }
+
+    /// [`Core::with_paths`] searching for videos with `searcher`, at most once per `interval`
+    /// (tests use an offline searcher).
+    pub fn with_searcher(
+        data_dir: &Path,
+        config_path: &Path,
+        searcher: Arc<dyn Searcher>,
+        interval: Duration,
+    ) -> Result<Arc<Self>, CoreError> {
         let library = Library::open(data_dir)?;
         let scan_index = ScanIndex::load(library.data_dir().join("watch-index.json"));
+        let config = config::load(config_path);
         let shared = Arc::new(Shared {
             library,
             observer: RwLock::new(None),
             scan_index: Mutex::new(scan_index),
+            finder: VideoFinder::new(searcher, interval),
+            auto_find_videos: AtomicBool::new(false),
         });
+        shared.apply_video_settings(&config);
         let watcher = {
             let shared = Arc::clone(&shared);
             let data_dir = shared.library.data_dir().to_path_buf();
@@ -363,7 +462,7 @@ impl Core {
             .ok();
         let core = Arc::new(Self {
             shared,
-            config: RwLock::new(config::load(config_path)),
+            config: RwLock::new(config),
             saver: ConfigSaver::new(config_path.to_path_buf(), CONFIG_SAVE_DEBOUNCE),
             watched: Mutex::new(Watched {
                 watcher,
@@ -374,6 +473,11 @@ impl Core {
         });
         let folders = core.apply_watched_folders();
         core.scan_in_background(folders, true);
+        // Searches a previous run didn't get to.
+        match core.shared.library.pending_video_searches() {
+            Ok(pending) => core.shared.finder.enqueue(&core.shared, &pending, false),
+            Err(e) => log::error!("couldn't read pending video searches: {e}"),
+        }
         Ok(core)
     }
 
@@ -442,6 +546,12 @@ impl Core {
     }
 }
 
+impl Drop for Core {
+    fn drop(&mut self) {
+        self.shared.finder.shut_down();
+    }
+}
+
 impl Shared {
     fn changed(&self) {
         if let Some(o) = self.observer.read().clone() {
@@ -449,8 +559,15 @@ impl Shared {
         }
     }
 
-    /// Import `files` in parallel with progress, then notify one library change.
-    fn import_files(&self, files: &[PathBuf]) -> Vec<ImportOutcome> {
+    fn apply_video_settings(&self, config: &Config) {
+        self.auto_find_videos
+            .store(config.auto_find_videos, Ordering::Relaxed);
+        self.finder.set_auto_attach(config.auto_attach_videos);
+    }
+
+    /// Import `files` in parallel with progress, then notify one library change. Newly
+    /// imported tabs are queued for a video search (if `Config::auto_find_videos`).
+    fn import_files(self: &Arc<Self>, files: &[PathBuf]) -> Vec<ImportOutcome> {
         let observer = self.observer.read().clone();
         let outcomes = import::import_all(&self.library, files, observer.as_deref());
         self.scan_index.lock().record(
@@ -460,6 +577,20 @@ impl Shared {
                 .filter(|(_, o)| o.error.is_none())
                 .map(|(f, _)| f.as_path()),
         );
+        if self.auto_find_videos.load(Ordering::Relaxed) {
+            let new: Vec<TabId> = outcomes
+                .iter()
+                .filter(|o| !o.duplicate)
+                .filter_map(|o| o.id)
+                .filter(|&id| {
+                    self.library
+                        .queue_video_search(id, false)
+                        .inspect_err(|e| log::error!("couldn't queue a video search: {e}"))
+                        .unwrap_or(false)
+                })
+                .collect();
+            self.finder.enqueue(self, &new, false);
+        }
         if let Some(o) = observer {
             o.library_changed();
         }
@@ -467,7 +598,7 @@ impl Shared {
     }
 
     /// Import the tab files in `folders`; with `skip_seen`, only new or changed ones.
-    fn scan(&self, folders: &[PathBuf], skip_seen: bool) -> Vec<ImportOutcome> {
+    fn scan(self: &Arc<Self>, folders: &[PathBuf], skip_seen: bool) -> Vec<ImportOutcome> {
         let mut files = import::expand(folders, self.library.data_dir());
         if skip_seen {
             files = self.scan_index.lock().changed(files);
@@ -477,6 +608,22 @@ impl Shared {
         }
         log::info!("importing {} file(s) from watched folders", files.len());
         self.import_files(&files)
+    }
+}
+
+impl FinderHost for Shared {
+    fn library(&self) -> &Library {
+        &self.library
+    }
+
+    fn finder(&self) -> &VideoFinder {
+        &self.finder
+    }
+
+    fn search_finished(&self, tab: TabId) {
+        if let Some(o) = self.observer.read().clone() {
+            o.video_search_finished(tab);
+        }
     }
 }
 

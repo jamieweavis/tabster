@@ -30,6 +30,8 @@ CONFIG=release just app # optimised build; `just dmg` packages it
     viewer only (`Viewer/ViewerHarness.swift`)
   - `TABSTER_YT_HARNESS=<video id>` (+ `TABSTER_YT_PAGE=localhost`): YouTube player + clock log (`Video/`)
 - `cargo run --example render_svg -- <tab file> <track> <out.svg>` renders a track's layout to SVG.
+- `cargo run --example yt_search -- "<artist>" "<title>" <m:ss> [response.json]` searches YouTube (or
+  ranks a saved `youtubei/v1/search` response) and prints how the matcher scores each result.
 - `.cargo/config.toml` sets `MACOSX_DEPLOYMENT_TARGET=26.0` so bundled C code (SQLite) matches the app.
 
 ## Architecture
@@ -46,7 +48,12 @@ CONFIG=release just app # optimised build; `just dmg` packages it
 - `sync` — `SyncSpec` (offset+stretch, or one video time per played bar) → `SyncMap`
   (piecewise-linear score seconds ↔ video seconds).
 - `layout` — track → `DisplayList`; `cursor()` and `hit_test()` against it.
-- `library` — SQLite catalogue, content-addressed file store, parse cache, tags, setlists, videos.
+- `library` — SQLite catalogue, content-addressed file store, parse cache, tags, setlists, videos,
+  video searches.
+- `video_search` — finding a tab's YouTube video: `client` (keyless `youtubei/v1/search`, HTML
+  fallback), `parse` (walks the JSON for `videoRenderer`s), `matching` (scores title, artist, channel,
+  version and length against the tab; `High` confidence is attached without asking), `finder` (one
+  background thread, throttled, rate-limit backoff, pending searches survive restarts).
 - `lib.rs` — the FFI surface: `Core` (library) and `TabSession` (one open tab).
 
 **Time axes:** played ticks → (tempo map) → score seconds → (`SyncMap`) → video seconds. While a
@@ -59,6 +66,9 @@ every frame.
 (both gitignored) → SwiftPM builds the shell linking the `.a` → bundle assembled from
 `Resources/Info.plist` + `Resources/Bundle/` and codesigned. Frameworks Rust crates need must be added
 to `linkerSettings` in `shell/Package.swift`.
+
+Tests never reach YouTube: build `Core::with_searcher` with a fake `Searcher` (see
+`tests/video_search.rs`), not `Core::with_paths`, whenever tabs get imported.
 
 **Shell side:** `AppModel` owns the `Core`. Observer bridges receive Rust callbacks on arbitrary
 threads and must hop to `DispatchQueue.main.async` before `MainActor.assumeIsolated`. Blocking calls

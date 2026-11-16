@@ -51,6 +51,10 @@ pub struct TabSummary {
     pub duration_secs: f64,
     pub favourite: bool,
     pub has_video: bool,
+    /// A video search is queued or running.
+    pub finding_video: bool,
+    /// A search found a likely video but didn't attach it (and it wasn't dismissed).
+    pub video_suggested: bool,
     pub tags: Vec<String>,
     /// Unix seconds.
     pub imported_at: i64,
@@ -95,6 +99,18 @@ pub struct Video {
     pub label: String,
     pub is_default: bool,
     pub sync: SyncSpec,
+    /// The video's YouTube title and channel, when it was attached from a search (else empty).
+    pub title: String,
+    pub channel: String,
+    pub duration_secs: Option<f64>,
+}
+
+/// What YouTube says about an attached video.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VideoDetails {
+    pub title: String,
+    pub channel: String,
+    pub duration_secs: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -118,12 +134,14 @@ pub struct PracticeState {
 mod metadata;
 mod practice;
 mod schema;
+mod searches;
 #[cfg(test)]
 mod tests;
 pub mod watch;
 mod youtube;
 
 pub use practice::{PracticeStats, SavedLoop};
+pub use searches::{VideoSearch, VideoSearchState};
 pub use watch::FolderWatcher;
 
 impl From<rusqlite::Error> for LibraryError {
@@ -158,7 +176,10 @@ const SUMMARY_COLUMNS: &str = "t.id, t.title, t.artist, t.album, t.format, t.tun
     EXISTS (SELECT 1 FROM videos v WHERE v.tab_id = t.id),
     (SELECT group_concat(g.name, char(31)) FROM tab_tags tt JOIN tags g ON g.id = tt.tag_id
       WHERE tt.tab_id = t.id),
-    t.imported_at, t.last_opened_at";
+    t.imported_at, t.last_opened_at,
+    EXISTS (SELECT 1 FROM video_searches s WHERE s.tab_id = t.id AND s.state = 'pending'),
+    EXISTS (SELECT 1 FROM video_searches s WHERE s.tab_id = t.id AND s.suggested
+      AND NOT s.dismissed AND NOT EXISTS (SELECT 1 FROM videos v WHERE v.tab_id = t.id))";
 
 type ParseFn<'a> = &'a dyn Fn(&[u8], Option<&str>) -> Result<Score, ParseError>;
 
@@ -507,8 +528,8 @@ impl Library {
     pub fn videos(&self, tab: TabId) -> Result<Vec<Video>, LibraryError> {
         let reader = self.reader.lock();
         let mut statement = reader.prepare(
-            "SELECT id, tab_id, youtube_id, label, is_default, sync FROM videos
-             WHERE tab_id = ?1 ORDER BY id",
+            "SELECT id, tab_id, youtube_id, label, is_default, sync, title, channel, duration_secs
+             FROM videos WHERE tab_id = ?1 ORDER BY id",
         )?;
         let rows = statement.query_map([tab], video_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -521,13 +542,34 @@ impl Library {
         youtube_id: &str,
         label: &str,
     ) -> Result<VideoId, LibraryError> {
+        self.add_video_with_details(tab, youtube_id, label, &VideoDetails::default())
+    }
+
+    /// [`Library::add_video`] with the video's YouTube title, channel and length.
+    pub fn add_video_with_details(
+        &self,
+        tab: TabId,
+        youtube_id: &str,
+        label: &str,
+        details: &VideoDetails,
+    ) -> Result<VideoId, LibraryError> {
         let sync = sync_json(&SyncSpec::default())?;
         let writer = self.writer.lock();
         // One statement, so the "first video" check and the insert are atomic.
         writer.execute(
-            "INSERT INTO videos (tab_id, youtube_id, label, is_default, sync)
-             VALUES (?1, ?2, ?3, NOT EXISTS (SELECT 1 FROM videos WHERE tab_id = ?1), ?4)",
-            params![tab, youtube_id, label.trim(), sync],
+            "INSERT INTO videos (tab_id, youtube_id, label, is_default, sync, title, channel,
+                                 duration_secs)
+             VALUES (?1, ?2, ?3, NOT EXISTS (SELECT 1 FROM videos WHERE tab_id = ?1), ?4, ?5, ?6,
+                     ?7)",
+            params![
+                tab,
+                youtube_id,
+                label.trim(),
+                sync,
+                details.title.trim(),
+                details.channel.trim(),
+                details.duration_secs
+            ],
         )?;
         Ok(writer.last_insert_rowid())
     }
@@ -787,6 +829,8 @@ fn summary_from_row(row: &Row) -> rusqlite::Result<TabSummary> {
         duration_secs: row.get(8)?,
         favourite: row.get(9)?,
         has_video: row.get(10)?,
+        finding_video: row.get(14)?,
+        video_suggested: row.get(15)?,
         tags,
         imported_at: row.get(12)?,
         last_opened_at: row.get(13)?,
@@ -802,6 +846,9 @@ fn video_from_row(row: &Row) -> rusqlite::Result<Video> {
         label: row.get(3)?,
         is_default: row.get(4)?,
         sync: serde_json::from_str(&sync).unwrap_or_default(),
+        title: row.get(6)?,
+        channel: row.get(7)?,
+        duration_secs: row.get(8)?,
     })
 }
 

@@ -216,7 +216,7 @@ struct VideoAudioButton: View {
             systemImage: "play.rectangle",
             isOn: Binding(get: { model.hearingVideo }, set: { on in
                 if model.videos.isEmpty {
-                    model.showAttachSheet = true
+                    model.showVideoFinder = true
                 } else {
                     model.videoAudio = on
                 }
@@ -224,14 +224,14 @@ struct VideoAudioButton: View {
             // With nothing attached the panel would only offer "Attach Video…", so go straight there.
             showOptions: Binding(get: { model.showVideoOptions }, set: { show in
                 if show && model.videos.isEmpty {
-                    model.showAttachSheet = true
+                    model.showVideoFinder = true
                 } else {
                     model.showVideoOptions = show
                 }
             }),
-            help: model.videos.isEmpty ? "Attach a YouTube video to play with the tab"
+            help: model.videos.isEmpty ? "Find a YouTube video to play with the tab"
                                        : "Hear the YouTube video (turns tab audio off)",
-            optionsHelp: "Choose, attach or remove videos"
+            optionsHelp: "Choose, find or remove videos"
         ) {
             VideoPanel(model: model)
         }
@@ -246,7 +246,14 @@ struct VideoPanel: View {
             SoundPanel.header("YouTube", isOn: Binding(get: { model.hearingVideo }, set: { model.videoAudio = $0 }))
                 .disabled(model.videos.isEmpty)
 
-            if model.videos.isEmpty {
+            if model.videos.isEmpty, model.findingVideo {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Searching YouTube…")
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            } else if model.videos.isEmpty {
                 Text("No videos attached to this tab.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -258,10 +265,11 @@ struct VideoPanel: View {
                 }
             }
 
-            Button("Attach Video…", systemImage: "plus") {
+            Button("Find on YouTube…", systemImage: "magnifyingglass") {
                 model.showVideoOptions = false
-                model.showAttachSheet = true
+                model.showVideoFinder = true
             }
+            .help("Search YouTube for this song, or paste a link")
 
             Button(model.syncEditing ? "Stop Syncing" : "Sync Tab to Video…", systemImage: "arrow.left.and.right") {
                 model.showVideoOptions = false
@@ -289,7 +297,7 @@ struct VideoPanel: View {
                 }
                 .contentShape(Rectangle())
             }
-            .help("Play this video")
+            .help(video.channel.isEmpty ? "Play this video" : "Play this video (\(video.channel))")
 
             Button {
                 model.makeDefault(video)
@@ -311,8 +319,14 @@ struct VideoPanel: View {
         .padding(.vertical, 3)
     }
 
+    /// "Original · Song Title" for a video attached from a search; "Original (id)" for a link.
     static func title(_ v: Video) -> String {
-        v.label.isEmpty ? v.youtubeId : "\(v.label) (\(v.youtubeId))"
+        switch (v.label.isEmpty, v.title.isEmpty) {
+        case (true, true): v.youtubeId
+        case (true, false): v.title
+        case (false, true): "\(v.label) (\(v.youtubeId))"
+        case (false, false): "\(v.label) · \(v.title)"
+        }
     }
 }
 

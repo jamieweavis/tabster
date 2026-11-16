@@ -6,7 +6,7 @@ use rusqlite::{Connection, TransactionBehavior};
 use super::LibraryError;
 
 /// Each step runs in its own transaction, together with the `user_version` bump.
-const MIGRATIONS: &[&str] = &[V1, V2];
+const MIGRATIONS: &[&str] = &[V1, V2, V3];
 
 const V1: &str = "
 CREATE TABLE tabs (
@@ -123,6 +123,34 @@ CREATE TABLE practice_days (
     last_at INTEGER NOT NULL,
     PRIMARY KEY (tab_id, day)
 ) WITHOUT ROWID;
+";
+
+/// Finding videos automatically: what each tab's search found, and the attached videos' YouTube
+/// details.
+const V3: &str = "
+CREATE TABLE video_searches (
+    tab_id INTEGER PRIMARY KEY REFERENCES tabs (id) ON DELETE CASCADE,
+    -- 'pending' (queued or running), 'done' or 'failed'.
+    state TEXT NOT NULL,
+    query TEXT NOT NULL DEFAULT '',
+    -- serde_json of the ranked `Vec<VideoMatch>`, best first.
+    results TEXT NOT NULL DEFAULT '[]',
+    error TEXT NOT NULL DEFAULT '',
+    -- The video the search attached by itself, if any.
+    attached_youtube_id TEXT,
+    -- Nothing was attached but a likely match was found: the library suggests it.
+    suggested INTEGER NOT NULL DEFAULT 0,
+    -- The user dismissed the suggestions; automatic searches leave the tab alone.
+    dismissed INTEGER NOT NULL DEFAULT 0,
+    -- Unix seconds.
+    queued_at INTEGER NOT NULL,
+    searched_at INTEGER
+);
+CREATE INDEX video_searches_pending ON video_searches (queued_at) WHERE state = 'pending';
+
+ALTER TABLE videos ADD COLUMN title TEXT NOT NULL DEFAULT '';
+ALTER TABLE videos ADD COLUMN channel TEXT NOT NULL DEFAULT '';
+ALTER TABLE videos ADD COLUMN duration_secs REAL;
 ";
 
 /// Bring the database up to the latest schema. Refuses a database from a newer Tabster.

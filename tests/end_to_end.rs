@@ -1,11 +1,23 @@
 //! Whole-pipeline checks through the FFI surface: import → open → layout → cursor → sync.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
 use tabster_core::Core;
 use tabster_core::layout::LayoutOptions;
 use tabster_core::library::TabFilter;
 use tabster_core::sync::{SyncPoint, SyncSpec};
+use tabster_core::video_search::{SearchError, Searcher, VideoCandidate};
+
+/// Video searches fail at once: tests never reach YouTube.
+struct Offline;
+
+impl Searcher for Offline {
+    fn search(&self, _query: &str) -> Result<Vec<VideoCandidate>, SearchError> {
+        Err(SearchError::Network("offline".into()))
+    }
+}
 
 fn fixture(name: &str) -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -18,7 +30,13 @@ fn fixture(name: &str) -> String {
 fn run_pipeline(path: &str) {
     let dir = tempfile::tempdir().unwrap();
     // A private config, so the test never reads or watches the user's folders.
-    let core = Core::with_paths(dir.path(), &dir.path().join("tabster.toml")).unwrap();
+    let core = Core::with_searcher(
+        dir.path(),
+        &dir.path().join("tabster.toml"),
+        Arc::new(Offline),
+        Duration::ZERO,
+    )
+    .unwrap();
 
     let outcomes = core.import_paths(vec![path.to_string()]);
     assert_eq!(outcomes.len(), 1);
@@ -137,7 +155,13 @@ fn real_tab_pipeline() {
 #[test]
 fn cursor_glides_into_the_next_bar() {
     let dir = tempfile::tempdir().unwrap();
-    let core = Core::with_paths(dir.path(), &dir.path().join("tabster.toml")).unwrap();
+    let core = Core::with_searcher(
+        dir.path(),
+        &dir.path().join("tabster.toml"),
+        Arc::new(Offline),
+        Duration::ZERO,
+    )
+    .unwrap();
     let id = core.import_paths(vec![fixture("gp5/basics.gp5")])[0]
         .id
         .unwrap();

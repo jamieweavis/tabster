@@ -74,6 +74,16 @@ struct TabTable: View {
                         .foregroundStyle(.secondary)
                         .help("Has a video")
                         .accessibilityLabel("Has a video")
+                } else if tab.findingVideo {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .help("Searching YouTube…")
+                        .accessibilityLabel("Searching YouTube")
+                } else if tab.videoSuggested {
+                    Image(systemName: "sparkle.magnifyingglass")
+                        .foregroundStyle(.tint)
+                        .help("A video was found: open the tab to check it")
+                        .accessibilityLabel("Video found")
                 }
             }
             .width(22)
@@ -206,6 +216,11 @@ struct TabTable: View {
         if selected.count == 1, let tab = selected.first {
             Button("Tags…", systemImage: "tag") { tagging = tab }
         }
+        Button(selected.count == 1 ? "Find YouTube Video" : "Find YouTube Videos",
+               systemImage: "magnifyingglass") {
+            model.findVideos(ids)
+        }
+        .disabled(selected.allSatisfy(\.findingVideo))
         Divider()
         Button("Reveal in Finder", systemImage: "folder") {
             let urls = ids.compactMap { model.filePath($0) }

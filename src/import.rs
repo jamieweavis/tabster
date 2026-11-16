@@ -315,6 +315,7 @@ mod tests {
         }
         fn library_changed(&self) {}
         fn tab_opened(&self, _id: crate::library::TabId) {}
+        fn video_search_finished(&self, _tab: crate::library::TabId) {}
     }
 
     #[test]
