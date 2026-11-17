@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/jamieweavis/tabster/compare/v0.1.1...v0.1.2) - 2026-11-17
+
+### Added
+
+- ship universal (Apple Silicon + Intel) release builds
+
 ## [0.1.1](https://github.com/jamieweavis/tabster/compare/v0.1.0...v0.1.1) - 2026-11-16
 
 ### Added
