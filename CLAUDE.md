@@ -34,8 +34,9 @@ CONFIG=release just app # optimised universal (arm64 + x86_64) build; `just dmg`
   ranks a saved `youtubei/v1/search` response) and prints how the matcher scores each result.
 - `UNIVERSAL=1` (default for release) builds the core for both `aarch64-` and `x86_64-apple-darwin`,
   `lipo`s them into `build/universal/<config>/`, and passes `--arch arm64 --arch x86_64` to SwiftPM
-  (which then uses Xcode's build system and warns that x86_64 is deprecated: harmless, minos stays 26.0).
-  `cargo test --target x86_64-apple-darwin` runs the suite under Rosetta.
+  (which warns that x86_64 is deprecated for the host's macOS: harmless, minos stays 26.0).
+  `cargo test --target x86_64-apple-darwin` runs the suite under Rosetta; `tests/robustness.rs`
+  timing budgets go through `budget()`, which triples them when the process is translated.
 - `.cargo/config.toml` sets `MACOSX_DEPLOYMENT_TARGET=26.0` so bundled C code (SQLite) matches the app.
 
 ## Architecture

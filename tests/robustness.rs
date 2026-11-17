@@ -1,6 +1,8 @@
 //! Pathological-but-valid (and hostile) inputs: everything must finish quickly, stay within
 //! sane memory, and never panic.
 
+use std::process::Command;
+use std::sync::OnceLock;
 use std::time::{Duration as Elapsed, Instant};
 
 use tabster_core::formats;
@@ -15,6 +17,19 @@ use tabster_core::timeline::Timeline;
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
+
+/// A timing budget for native code, stretched 3x when the tests run as x86_64 under Rosetta
+/// (CI's Intel step), which is 2-2.5x slower there.
+fn budget(native: Elapsed) -> Elapsed {
+    static TRANSLATED: OnceLock<bool> = OnceLock::new();
+    let translated = *TRANSLATED.get_or_init(|| {
+        Command::new("sysctl")
+            .args(["-in", "sysctl.proc_translated"])
+            .output()
+            .is_ok_and(|o| o.stdout.trim_ascii() == b"1")
+    });
+    if translated { native * 3 } else { native }
+}
 
 fn note(string: u8, fret: u8) -> Note {
     Note {
@@ -150,7 +165,11 @@ fn largest_importable_score_lays_out_and_plays_in_bounded_time() {
     s.tracks.push(s.tracks[0].clone());
     exercise(
         &s,
-        Elapsed::from_secs(if cfg!(debug_assertions) { 120 } else { 15 }),
+        budget(Elapsed::from_secs(if cfg!(debug_assertions) {
+            120
+        } else {
+            15
+        })),
     );
 }
 
@@ -176,7 +195,7 @@ fn jumps_on_every_bar_unroll_quickly() {
     let timeline = Timeline::new(&s);
     assert!(timeline.played_bars().len() <= n * 10 + 1000);
     assert!(
-        start.elapsed() < Elapsed::from_secs(2),
+        start.elapsed() < budget(Elapsed::from_secs(2)),
         "{:?}",
         start.elapsed()
     );
@@ -197,7 +216,7 @@ fn many_bars_with_repeats_and_dal_segno_stay_capped() {
     s.master_bars[n - 2].directions.push(Direction::DaCapo);
     let timeline = Timeline::new(&s);
     assert!(timeline.played_bars().len() <= n * 10 + 1000);
-    exercise(&s, Elapsed::from_secs(10));
+    exercise(&s, budget(Elapsed::from_secs(10)));
 }
 
 #[test]
@@ -228,12 +247,12 @@ fn sixty_fourth_tuplets_everywhere_layout_is_bounded() {
     let elapsed = start.elapsed();
     assert!(!list.systems.is_empty());
     // Generous in debug builds; the 50 ms target is for release.
-    let budget = if cfg!(debug_assertions) { 2_000 } else { 50 };
+    let budget_ms = if cfg!(debug_assertions) { 2_000 } else { 50 };
     assert!(
-        elapsed < Elapsed::from_millis(budget),
+        elapsed < budget(Elapsed::from_millis(budget_ms)),
         "layout took {elapsed:?}"
     );
-    exercise(&s, Elapsed::from_secs(20));
+    exercise(&s, budget(Elapsed::from_secs(20)));
 }
 
 #[test]
@@ -259,7 +278,7 @@ fn zero_length_and_empty_bars() {
         numerator: 0,
         denominator: 0,
     };
-    exercise(&s, Elapsed::from_secs(5));
+    exercise(&s, budget(Elapsed::from_secs(5)));
 }
 
 #[test]
@@ -298,7 +317,7 @@ fn absurd_tempos() {
                 bpm: 60.0,
             },
         ];
-        exercise(&s, Elapsed::from_secs(5));
+        exercise(&s, budget(Elapsed::from_secs(5)));
     }
 }
 
@@ -318,7 +337,7 @@ fn string_counts_and_extreme_frets() {
             ..s.tracks[0].clone()
         };
         s.tracks.push(percussion);
-        exercise(&s, Elapsed::from_secs(5));
+        exercise(&s, budget(Elapsed::from_secs(5)));
     }
 }
 
@@ -342,7 +361,7 @@ fn tremolo_on_huge_beats_is_bounded() {
     let timeline = Timeline::new(&s);
     let start = Instant::now();
     let ev = events::build(&s, &timeline);
-    assert!(start.elapsed() < Elapsed::from_secs(10));
+    assert!(start.elapsed() < budget(Elapsed::from_secs(10)));
     assert!(ev.notes.len() <= 2 * 4_000_000, "{} events", ev.notes.len());
     assert!(ev.clicks.len() <= 4_000_000, "{} clicks", ev.clicks.len());
 }
@@ -375,7 +394,7 @@ fn layout_with_hostile_options() {
         let _ = layout::cursor(&list, 3, 100, 3840);
         let _ = layout::hit_test(&list, 10.0, 10.0);
         assert!(
-            start.elapsed() < Elapsed::from_secs(2),
+            start.elapsed() < budget(Elapsed::from_secs(2)),
             "width {width} scale {scale}: {:?}",
             start.elapsed()
         );
@@ -438,7 +457,7 @@ fn gp5_huge_counts_with_tiny_data_fail_fast() {
         let start = Instant::now();
         assert!(formats::parse(&bytes, Some("gp5")).is_err());
         assert!(
-            start.elapsed() < Elapsed::from_millis(500),
+            start.elapsed() < budget(Elapsed::from_millis(500)),
             "{bars}×{tracks}"
         );
     }
@@ -477,7 +496,7 @@ fn gpif_reference_amplification_is_rejected() {
     let result = formats::gpif::parse_gpif(&xml);
     assert!(result.is_err(), "expected an error");
     assert!(
-        start.elapsed() < Elapsed::from_secs(5),
+        start.elapsed() < budget(Elapsed::from_secs(5)),
         "{:?}",
         start.elapsed()
     );
@@ -519,7 +538,7 @@ fn gpif_deeply_nested_and_huge_xml() {
     // Unclosed deep nesting is an error, not a crash.
     let x = format!("<GPIF>{}", "<a>".repeat(depth));
     assert!(formats::gpif::parse_gpif(x.as_bytes()).is_err());
-    assert!(start.elapsed() < Elapsed::from_secs(10));
+    assert!(start.elapsed() < budget(Elapsed::from_secs(10)));
 }
 
 #[test]
@@ -552,5 +571,5 @@ fn gpif_absurd_values_survive_the_pipeline() {
       </Rhythms>
     </GPIF>"#;
     let score = formats::gpif::parse_gpif(xml).unwrap();
-    exercise(&score, Elapsed::from_secs(10));
+    exercise(&score, budget(Elapsed::from_secs(10)));
 }
