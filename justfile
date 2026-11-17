@@ -6,7 +6,14 @@ sign_identity := env("TABSTER_SIGN_IDENTITY", "Apple Development")
 bundle_id := "com.jamieweavis.tabster"
 
 rust_flag := if config == "release" { "--release" } else { "" }
-rust_out := justfile_directory() / "target" / config
+# Release builds are universal (arm64 + x86_64); debug builds are native only. UNIVERSAL=0/1 overrides.
+universal := env("UNIVERSAL", if config == "release" { "1" } else { "0" })
+# Where the bindings are generated from (the arm64 slice when universal: both slices bind identically).
+rust_out := if universal == "1" { justfile_directory() / "target" / "aarch64-apple-darwin" / config } else { justfile_directory() / "target" / config }
+# Where the shell links libtabster_core.a from (lipo'd fat archive when universal).
+lib_dir := if universal == "1" { justfile_directory() / "build" / "universal" / config } else { rust_out }
+swift_arch := if universal == "1" { "--arch arm64 --arch x86_64" } else { "" }
+dmg_arch := if universal == "1" { "universal" } else if arch() == "aarch64" { "arm64" } else { "x86_64" }
 ffi_dir := "shell/Sources/TabsterCoreFFI/include"
 generated_dir := "shell/Sources/Tabster/Generated"
 app := "build/Tabster.app"
@@ -14,9 +21,21 @@ app := "build/Tabster.app"
 default:
     @just --list
 
-# Build the Rust core static library
+# Build the Rust core static library (both architectures, lipo'd together, when universal)
 core:
-    cargo build -p tabster {{rust_flag}}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{universal}}" != 1 ]; then
+        cargo build -p tabster {{rust_flag}}
+        exit 0
+    fi
+    for t in aarch64-apple-darwin x86_64-apple-darwin; do
+        rustup target list --installed | grep -qx "$t" || { echo "missing Rust target: rustup target add $t" >&2; exit 1; }
+    done
+    cargo build -p tabster {{rust_flag}} --target aarch64-apple-darwin --target x86_64-apple-darwin
+    mkdir -p "{{lib_dir}}"
+    lipo -create -output "{{lib_dir}}/libtabster_core.a" \
+        target/aarch64-apple-darwin/{{config}}/libtabster_core.a target/x86_64-apple-darwin/{{config}}/libtabster_core.a
 
 # Regenerate the Swift bindings for the Rust core
 bindings: core
@@ -29,7 +48,7 @@ bindings: core
 
 # Build the Swift shell, linked against the Rust core
 build: bindings
-    swift build --package-path shell -c {{config}} -Xlinker -L{{rust_out}}
+    swift build --package-path shell -c {{config}} {{swift_arch}} -Xlinker -L{{lib_dir}}
 
 # Assemble and sign build/Tabster.app
 app: build soundfont
@@ -39,15 +58,15 @@ app: build soundfont
     cp -R Resources/Bundle/. {{app}}/Contents/Resources/
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $({{just_executable()}} version)" \
         -c "Set :CFBundleVersion $({{just_executable()}} version)" {{app}}/Contents/Info.plist
-    cp "$(swift build --package-path shell -c {{config}} --show-bin-path)/Tabster" {{app}}/Contents/MacOS/
+    cp "$(swift build --package-path shell -c {{config}} {{swift_arch}} --show-bin-path)/Tabster" {{app}}/Contents/MacOS/
     codesign --force --options runtime --entitlements Resources/Tabster.entitlements \
         --sign "{{sign_identity}}" {{app}}
 
-# Package build/Tabster.app as build/Tabster-<version>-macos-arm64.dmg (CONFIG=release to ship)
+# Package build/Tabster.app as build/Tabster-<version>-macos-<arch>.dmg (CONFIG=release to ship a universal one)
 dmg: app
     #!/usr/bin/env bash
     set -euo pipefail
-    dmg="build/Tabster-$({{just_executable()}} version)-macos-arm64.dmg"
+    dmg="build/Tabster-$({{just_executable()}} version)-macos-{{dmg_arch}}.dmg"
     rm -rf build/dmg
     mkdir -p build/dmg
     cp -R {{app}} build/dmg/
@@ -94,7 +113,7 @@ test:
 
 # Run the Swift shell's unit tests (TabsterKit). Builds the whole package, so it needs the core.
 test-swift: bindings
-    swift test --package-path shell -Xlinker -L{{rust_out}}
+    swift test --package-path shell -Xlinker -L{{lib_dir}}
 
 # Format Rust code
 fmt:

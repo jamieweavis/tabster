@@ -16,7 +16,7 @@ just test-swift       # swift test for the shell's pure-logic TabsterKit target 
 just lint             # cargo fmt --check + clippy with -D warnings
 just check            # everything CI runs: lint, test, app build
 just logs [info]      # stream the app's os_log output (subsystem com.jamieweavis.tabster)
-CONFIG=release just app # optimised build; `just dmg` packages it
+CONFIG=release just app # optimised universal (arm64 + x86_64) build; `just dmg` packages it
 ```
 
 - Single test: `cargo test <name_substring>` (e.g. `cargo test timeline::`).
@@ -32,6 +32,10 @@ CONFIG=release just app # optimised build; `just dmg` packages it
 - `cargo run --example render_svg -- <tab file> <track> <out.svg>` renders a track's layout to SVG.
 - `cargo run --example yt_search -- "<artist>" "<title>" <m:ss> [response.json]` searches YouTube (or
   ranks a saved `youtubei/v1/search` response) and prints how the matcher scores each result.
+- `UNIVERSAL=1` (default for release) builds the core for both `aarch64-` and `x86_64-apple-darwin`,
+  `lipo`s them into `build/universal/<config>/`, and passes `--arch arm64 --arch x86_64` to SwiftPM
+  (which then uses Xcode's build system and warns that x86_64 is deprecated: harmless, minos stays 26.0).
+  `cargo test --target x86_64-apple-darwin` runs the suite under Rosetta.
 - `.cargo/config.toml` sets `MACOSX_DEPLOYMENT_TARGET=26.0` so bundled C code (SQLite) matches the app.
 
 ## Architecture

@@ -30,6 +30,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+          targets: x86_64-apple-darwin
 
       - name: Install just
         uses: extractions/setup-just@v3
@@ -51,12 +52,18 @@ jobs:
       - name: Test
         run: just test
 
+      # The runner is Apple Silicon; run the Intel build under Rosetta to catch arch-specific drift.
+      - name: Test (x86_64)
+        run: cargo test --workspace --target x86_64-apple-darwin
+
       - name: Test Swift
         run: just test-swift
 
-      # Builds the bindings, the Swift shell and the bundle; CI has no signing identity, so sign ad hoc.
+      # Builds the bindings, the Swift shell and the bundle, universal like a release; CI has no signing
+      # identity, so sign ad hoc.
       - name: Build app
         env:
+          UNIVERSAL: "1"
           TABSTER_SIGN_IDENTITY: "-"
         run: just app
 
@@ -128,6 +135,8 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
 
       - name: Install just
         uses: extractions/setup-just@v3
@@ -152,7 +161,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          dmg="build/Tabster-${{ needs.release.outputs.version }}-macos-arm64.dmg"
+          dmg="build/Tabster-${{ needs.release.outputs.version }}-macos-universal.dmg"
           gh release upload "${{ needs.release.outputs.tag }}" "$dmg" "$dmg.sha256"
 
   publish:

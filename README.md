@@ -62,7 +62,7 @@ Grab the latest build from the [**releases page**](https://github.com/jamieweavi
 
 | Platform | File |
 | --- | --- |
-| **macOS** (Apple Silicon, 26.0+) | `Tabster-<version>-macos-arm64.dmg` |
+| **macOS** (Apple Silicon or Intel, 26.0+) | `Tabster-<version>-macos-universal.dmg` |
 
 > [!NOTE]
 > The app is ad-hoc signed but not notarised, so Gatekeeper will block it the first time. Right-click Tabster.app and choose **Open**, or run:
@@ -109,7 +109,9 @@ A Rust core ([`src/`](src)) does everything: parsing, the playback timeline, syn
 ### Packaging
 
 ```sh
-CONFIG=release just dmg  # build/Tabster-<version>-macos-arm64.dmg (+ .sha256)
+CONFIG=release just dmg  # build/Tabster-<version>-macos-universal.dmg (+ .sha256)
 ```
+
+Release builds are universal (arm64 + x86_64), which needs `rustup target add x86_64-apple-darwin`. Debug builds are native only; `UNIVERSAL=0/1` overrides either.
 
 Releases are automated with [release-plz](https://release-plz.dev): every push to `main` opens a release PR that bumps the version and updates `CHANGELOG.md` from the Conventional Commits. Merging it tags the release, and CI attaches the `.dmg` and publishes it.
