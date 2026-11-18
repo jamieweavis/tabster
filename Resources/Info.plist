@@ -10,6 +10,9 @@
     <string>com.jamieweavis.tabster</string>
     <key>CFBundleExecutable</key>
     <string>Tabster</string>
+    <!-- Resources/Bundle/AppIcon.icns, drawn by `just icon`. -->
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <!-- Both versions are stamped from Cargo.toml by `just app`. -->

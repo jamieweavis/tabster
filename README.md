@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src=".github/icon.png" alt="Tabster icon" width="128" height="128">
+
 # Tabster
 
 Native macOS Guitar Pro tab player that plays along in sync with YouTube for audio.

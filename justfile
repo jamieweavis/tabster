@@ -74,6 +74,23 @@ dmg: app
     hdiutil create -volname Tabster -srcfolder build/dmg -format UDZO -ov "$dmg"
     (cd build && shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg").sha256")
 
+# Redraw the app icon (tools/icon.swift) into Resources/Bundle/AppIcon.icns and the README's .github/icon.png
+icon:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set="build/AppIcon.iconset"
+    master="$set/icon_512x512@2x.png"
+    mkdir -p "$set"
+    swift tools/icon.swift "$master"
+    for s in 16 32 128 256 512; do
+        sips -z "$s" "$s" "$master" --out "$set/icon_${s}x${s}.png" >/dev/null
+    done
+    for s in 16 32 128 256; do
+        sips -z "$((s * 2))" "$((s * 2))" "$master" --out "$set/icon_${s}x${s}@2x.png" >/dev/null
+    done
+    iconutil -c icns "$set" -o Resources/Bundle/AppIcon.icns
+    cp "$set/icon_256x256@2x.png" .github/icon.png
+
 # Print the app's version (the workspace version, which release-plz bumps)
 version:
     @cargo pkgid -p tabster | sed 's/.*[#@]//'
