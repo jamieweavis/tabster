@@ -84,13 +84,15 @@ extension TabViewerModel {
         applySync(video.sync, persist: false)
         if usingVideoClock, let player {
             // Another video (or the same one with another sync): keep the score position.
-            let start = max(0, mediaTime(fromScore: score))
+            // At the top of the tab, start with the video's intro.
+            let start = score <= 0 ? 0 : max(0, mediaTime(fromScore: score))
             if player.videoID != video.youtubeId || player.failure != nil {
                 player.load(videoID: video.youtubeId, startSeconds: start, autoplay: wasPlaying)
             } else {
                 player.seek(to: start)
             }
             refresh(follow: false)
+            updateDisplayTime()
         } else {
             updateClockSource()
         }
@@ -194,7 +196,8 @@ extension TabViewerModel {
         clock = videoClock
         usingVideoClock = true
         configureSynthLayers()
-        let start = max(0, mediaTime(fromScore: score))
+        // At the top of the tab, start with the video's intro.
+        let start = score <= 0 ? 0 : max(0, mediaTime(fromScore: score))
         if player.videoID != video.youtubeId {
             player.load(videoID: video.youtubeId, startSeconds: start, autoplay: false)
         } else {
@@ -204,6 +207,7 @@ extension TabViewerModel {
         if abs(player.rate - speed) > 0.001 { videoClock.rate = speed }
         if wasPlaying { videoClock.play() }
         refresh(follow: false)
+        updateDisplayTime()
         ViewerLog.log.info("Video clock: \(video.youtubeId, privacy: .public) from \(start, format: .fixed(precision: 2)) s")
     }
 
@@ -228,6 +232,7 @@ extension TabViewerModel {
         if wasPlaying { internalClock.play() }
         clock = internalClock
         refresh(follow: false)
+        updateDisplayTime()
     }
 
     private func playerFailed(_ failure: YouTubePlayerFailure) {
@@ -258,7 +263,7 @@ extension TabViewerModel {
                 isPlaying = false
                 sink?.playingChanged(false)
                 refresh(follow: false)
-                displayTime = clampedScore(currentTime)
+                updateDisplayTime()
                 scheduleSave(immediately: true)
             }
         case .buffering, .unstarted:
@@ -297,7 +302,7 @@ extension TabViewerModel {
             updateLoopSpan(near: currentTime)
             if !isPlaying {
                 refresh(follow: false)
-                displayTime = clampedScore(currentTime)
+                updateDisplayTime()
             }
         }
     }

@@ -82,15 +82,18 @@ private struct NowPlaying: View {
             .frame(height: 16)
 
             HStack(spacing: 8) {
+                // With a video the bar is the video's own timeline, intro and outro included.
+                let length = model.barDuration
                 Text(TabViewer.time(model.displayTime))
                     .frame(minWidth: 34, alignment: .trailing)
                 Slider(
-                    value: Binding(get: { min(model.displayTime, model.duration) }, set: { model.seek(to: $0) }),
-                    in: 0...max(model.duration, 0.01)
+                    value: Binding(get: { min(max(0, model.displayTime), length) },
+                                   set: { model.seekBar(to: $0) }),
+                    in: 0...max(length, 0.01)
                 )
                 .controlSize(.mini)
                 .accessibilityLabel("Position")
-                Text(TabViewer.time(model.duration))
+                Text(TabViewer.time(length))
                     .frame(minWidth: 34, alignment: .leading)
             }
             .font(.system(size: 11))

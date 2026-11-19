@@ -412,12 +412,26 @@ final class TabViewerModel {
         guard session != nil, !isPlaying else { return }
         let now = currentTime
         var t = now
-        if t >= duration - 0.01 { t = 0 }
+        var fromTop = false
+        // Finished: start again from the top. A video is only finished when it ends: past
+        // the tab's last bar it's still playing its outro.
+        let knowsVideoEnd = usingVideoClock && (player?.duration ?? 0) > 0
+        if knowsVideoEnd ? videoEnded : t >= duration - 0.01 {
+            t = 0
+            fromTop = true
+        }
         updateLoopSpan(near: t)
-        if let span = loopSpan, !span.contains(t) { t = span.lowerBound }
+        if let span = loopSpan, !span.contains(t) {
+            t = span.lowerBound
+            fromTop = false
+        }
         // A video keeps its own position (e.g. still in the intro, before bar 1) unless the
         // transport has to move it.
-        if !usingVideoClock || t != now { seekClock(toScore: t) }
+        if fromTop {
+            clock.seek(to: topMediaTime)
+        } else if !usingVideoClock || t != now {
+            seekClock(toScore: t)
+        }
         clock.play()
         isPlaying = true
         sink?.playingChanged(true)
@@ -430,14 +444,14 @@ final class TabViewerModel {
         isPlaying = false
         sink?.playingChanged(false)
         refresh(follow: false)
-        displayTime = clampedScore(currentTime)
+        updateDisplayTime()
         scheduleSave(immediately: true)
     }
 
     func seek(to secs: Double) {
-        let t = min(max(0, secs), duration)
+        let t = clampedScore(secs)
         seekClock(toScore: t)
-        displayTime = t
+        updateDisplayTime()
         updateLoopSpan(near: t)
         refresh(follow: true)
         if !isPlaying { scheduleSave() }
@@ -466,7 +480,7 @@ final class TabViewerModel {
         let now = CACurrentMediaTime()
         if now - lastDisplayUpdate > 0.1 {
             lastDisplayUpdate = now
-            displayTime = clampedScore(t)
+            displayTime = barTime(fromMedia: media)
         }
         return position?.cursor
     }
@@ -500,6 +514,55 @@ final class TabViewerModel {
     }
 
     func clampedScore(_ t: Double) -> Double { min(max(0, t), duration) }
+
+    // MARK: - Player bar
+    //
+    // The bar runs on the clock's own axis: the video's time while a video plays (so an intro
+    // or outro the tab doesn't notate is on it, and it ticks in real seconds however the
+    // recording's tempo wanders), the tab's time otherwise. `displayTime` is on that axis.
+
+    /// The bar's length: the video's, or the tab's without one.
+    var barDuration: Double {
+        guard usingVideoClock else { return duration }
+        _ = syncRevision
+        if let length = player?.duration, length > 0 { return length }
+        if let length = selectedVideo?.durationSecs, length > 0 { return length }
+        // Not known yet: at least to the end of the tab.
+        return max(mediaTime(fromScore: duration), 0.01)
+    }
+
+    /// Where a clock time sits on the bar.
+    func barTime(fromMedia media: Double) -> Double {
+        min(max(0, media), usingVideoClock ? barDuration : duration)
+    }
+
+    /// Show the clock's position on the bar.
+    func updateDisplayTime() {
+        displayTime = barTime(fromMedia: clock.currentTime)
+    }
+
+    /// Drag the bar's scrubber to `time` (on the bar's axis).
+    func seekBar(to time: Double) {
+        guard usingVideoClock else {
+            seek(to: time)
+            return
+        }
+        let media = barTime(fromMedia: time)
+        clock.seek(to: media)
+        displayTime = media
+        updateLoopSpan(near: currentTime)
+        refresh(follow: true)
+        if !isPlaying { scheduleSave() }
+    }
+
+    /// The video has played to its end (as far as its length is known).
+    private var videoEnded: Bool {
+        guard usingVideoClock, let length = player?.duration, length > 0 else { return false }
+        return clock.currentTime >= length - 0.5
+    }
+
+    /// Video seconds of the tab's end (for the coverage strip).
+    var tabEndVideoSecs: Double { mediaTime(fromScore: duration) }
 
     func cursorPosition(atScore t: Double) -> PlaybackPosition? {
         guard let session else { return nil }
@@ -537,7 +600,22 @@ final class TabViewerModel {
 
     /// Back to the start of the loop when one is set, otherwise to the start of the tab.
     func rewind() {
-        seek(to: loopSpan?.lowerBound ?? 0)
+        if let span = loopSpan {
+            seek(to: span.lowerBound)
+            return
+        }
+        clock.seek(to: topMediaTime)
+        updateDisplayTime()
+        updateLoopSpan(near: 0)
+        refresh(follow: true)
+        if !isPlaying { scheduleSave() }
+    }
+
+    /// Where the clock goes for "from the top": the start of the video when one is the clock, so
+    /// an intro before bar 1 is heard and the cursor waits on bar 1 until the tab comes in.
+    /// Seeking to bar 1 itself (a click, previous bar, a loop) still skips the intro.
+    var topMediaTime: Double {
+        usingVideoClock ? min(0, mediaTime(fromScore: 0)) : 0
     }
 
     /// The speeds the current clock offers.
