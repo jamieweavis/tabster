@@ -74,6 +74,10 @@ struct LibraryView: View {
                     )
                     // "Tabster" is the title, over the list or centred above everything.
                     .toolbar(removing: .title)
+                    .toolbar {
+                        ToolbarSpacer(.flexible)
+                        ToolbarItem { BulkSyncButton(app: model) }
+                    }
                 }
             }
             .frame(minWidth: Self.detailMinWidth)
@@ -116,6 +120,15 @@ struct LibraryView: View {
             set: { if !$0 { model.importFailures = [] } }
         )) {
             ImportFailuresSheet(failures: model.importFailures)
+        }
+        .alert(
+            "Bulk Sync",
+            isPresented: Binding(get: { model.bulkSyncSummary != nil }, set: { if !$0 { model.bulkSyncSummary = nil } }),
+            presenting: model.bulkSyncSummary
+        ) { _ in
+            Button("OK") {}
+        } message: { message in
+            Text(message)
         }
         .alert(
             "Something Went Wrong",

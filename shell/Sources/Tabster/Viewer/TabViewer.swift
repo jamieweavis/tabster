@@ -104,6 +104,11 @@ struct TabViewer: View {
             }
         }
         .task { await model.open() }
+        // This tab's turn in a bulk sync: listen to its video, then hand back to the library.
+        .task(id: bulkSyncTurn) {
+            guard bulkSyncTurn != nil, let outcome = await model.syncForBulk(), !Task.isCancelled else { return }
+            app?.bulkSyncFinished(tab: tabID, outcome: outcome)
+        }
         .onChange(of: app?.config.showRhythm) { _, on in
             if let on { model.setShowRhythm(on) }
         }
@@ -123,6 +128,12 @@ struct TabViewer: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             model.close(synchronously: true)
         }
+    }
+
+    /// This tab's place in the bulk sync in progress, while it's the one being listened to.
+    private var bulkSyncTurn: Int? {
+        guard let run = app?.bulkSync, run.current == tabID else { return nil }
+        return run.index
     }
 
     /// Tells the window header (which shows it while the player bar is hidden) what's open.
@@ -207,6 +218,9 @@ private struct ViewerToolbar: ToolbarContent {
             sectionsMenu
         }
         ToolbarSpacer(.flexible)
+        ToolbarItem {
+            BulkSyncButton(app: app)
+        }
         ToolbarItem {
             syncToggle
         }

@@ -27,9 +27,23 @@ final class AppModel {
     }
     private(set) var tabs: [TabSummary] = []
     private(set) var tags: [String] = []
-    var selection: Int64?
+    var selection: Int64? {
+        didSet {
+            // Choosing another tab ends a bulk sync (its own moves set the run first).
+            if let run = bulkSync, run.current != selection { stopBulkSync() }
+        }
+    }
     /// The open tab's title and artist, published by its viewer (the table's rows may be filtered).
     var openTab: OpenTabCaption?
+
+    // MARK: Bulk sync (see Library/BulkSync.swift)
+
+    /// The bulk listen-and-sync run in progress.
+    var bulkSync: BulkSyncRun?
+    /// The untracked tabs are being gathered for a run.
+    var preparingBulkSync = false
+    /// How the last run went, shown in an alert until dismissed.
+    var bulkSyncSummary: String?
 
     // MARK: Import state
 

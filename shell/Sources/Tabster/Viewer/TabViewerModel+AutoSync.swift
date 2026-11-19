@@ -168,6 +168,67 @@ extension TabViewerModel {
         }
     }
 
+    // MARK: - Bulk sync
+
+    /// This tab's turn in a bulk sync (`AppModel.startBulkSync`): once the tab has opened,
+    /// listen to its video from start to end (or until Stop & Sync) and sync it. Nil when
+    /// cancelled (the viewer closed, or the run was stopped), which also stops the listening.
+    func syncForBulk() async -> BulkSyncOutcome? {
+        /// One poll; false when cancelled.
+        func tick() async -> Bool {
+            try? await Task.sleep(for: .milliseconds(250))
+            if Task.isCancelled {
+                if syncListener != nil { cancelAutoSync() }
+                return false
+            }
+            return true
+        }
+
+        while case .loading = phase {
+            guard await tick() else { return nil }
+        }
+        guard case .ready = phase else { return .skipped("the tab couldn't be opened") }
+        guard selectedVideo != nil else { return .skipped("no video") }
+        if !videoAudio { videoAudio = true }
+        // The video takes over as the clock once its player has it (or fails to).
+        var waited = 0.0
+        while !usingVideoClock {
+            if player?.failure != nil || waited > 10 { return .skipped("the video couldn't be played") }
+            guard await tick() else { return nil }
+            waited += 0.25
+        }
+        // A listen already under way (started by hand) counts as this one.
+        while autoSync == .aligning {
+            guard await tick() else { return nil }
+        }
+        if syncListener == nil { toggleAutoSync() }
+        // The tap itself failed: so would every other tab's.
+        if case let .failed(message) = autoSync { return .abort(message) }
+
+        var silent = 0.0
+        while true {
+            guard await tick() else { return nil }
+            switch autoSync {
+            case .listening:
+                if syncListener?.heardPlaying == true { continue }
+                silent += 0.25
+                if silent > 45 {
+                    cancelAutoSync()
+                    return .skipped("the video never started")
+                }
+            case .aligning:
+                continue
+            case .finished:
+                return .synced
+            case let .failed(message):
+                // Nothing heard at all is the Mac's audio (permission, output), not this tab.
+                return message == Self.explanation(of: AudioSyncError.Silent) ? .abort(message) : .failed(message)
+            case .idle:
+                return .skipped("the video stopped being the clock")
+            }
+        }
+    }
+
     /// Stop listening without syncing (the tab is closing, or the video changed).
     func cancelAutoSync() {
         if let listener = syncListener {
