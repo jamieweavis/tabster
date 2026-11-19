@@ -93,6 +93,16 @@ private struct NowPlaying: View {
                 )
                 .controlSize(.mini)
                 .accessibilityLabel("Position")
+                .overlay(alignment: .bottom) {
+                    if !model.syncCoverage.isEmpty, model.usingVideoClock {
+                        SyncCoverageStrip(coverage: model.syncCoverage, barStarts: model.barVideoTimes,
+                                          end: model.tabEndVideoSecs, length: length)
+                            .frame(height: 2)
+                            .padding(.horizontal, 5)
+                            .offset(y: 3)
+                            .allowsHitTesting(false)
+                    }
+                }
                 Text(TabViewer.time(length))
                     .frame(minWidth: 34, alignment: .leading)
             }
@@ -199,5 +209,41 @@ struct PlayerPillStyle: ButtonStyle {
     static func fill(on: Bool, hovering: Bool) -> Color {
         if on { return Color.accentColor.opacity(hovering ? 0.22 : 0.15) }
         return Color.primary.opacity(hovering ? 0.08 : 0)
+    }
+}
+
+/// What a listen covered, along the scrubber: solid where bars were heard, faint where they
+/// sit between heard bars, nothing where the tempo was only carried on.
+private struct SyncCoverageStrip: View {
+    let coverage: [BarCoverage]
+    /// Video seconds of each played bar's start, of the last bar's end, and of the bar's end.
+    let barStarts: [Double]
+    let end: Double
+    let length: Double
+
+    var body: some View {
+        Canvas { ctx, size in
+            guard length > 0, barStarts.count == coverage.count else { return }
+            let x = { (video: Double) in size.width * min(max(0, video / length), 1) }
+            var i = 0
+            while i < coverage.count {
+                // One rectangle per run of bars with the same coverage.
+                var j = i + 1
+                while j < coverage.count, coverage[j] == coverage[i] { j += 1 }
+                let opacity: Double = switch coverage[i] {
+                case .heard: 0.9
+                case .between: 0.35
+                case .beyond: 0
+                }
+                if opacity > 0 {
+                    let from = x(barStarts[i])
+                    let to = x(j < barStarts.count ? barStarts[j] : end)
+                    ctx.fill(Path(CGRect(x: from, y: 0, width: max(1, to - from), height: size.height)),
+                             with: .color(.green.opacity(opacity)))
+                }
+                i = j
+            }
+        }
+        .accessibilityHidden(true)
     }
 }

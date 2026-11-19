@@ -3,9 +3,10 @@ import SwiftUI
 /// Sync controls for a tab's video. Dumb: it shows values and reports intent; the owner updates
 /// the `SyncSpec` (`TabSession.setSync` + `core.setVideoSync`).
 ///
-/// Row 1: mode (offset / per-bar), "Tap Bar 1", "Tap", import menu. Row 2: ±10/±100 ms nudges
-/// with the offset (offset mode) or a shift of every point (per-bar mode), and the stretch slider
-/// (offset mode).
+/// Row 1: mode (offset / per-bar), "Listen" (automatic sync), "Tap Bar 1", "Tap", import menu.
+/// Row 2: ±10/±100 ms nudges with the offset (offset mode) or a shift of every point (per-bar
+/// mode), and the stretch slider (offset mode). Row 3, while there's something to say: how the
+/// automatic sync is going.
 struct SyncNudgeBar: View {
     struct Actions {
         /// Called with the nudge in seconds (±0.01 / ±0.1).
@@ -14,6 +15,8 @@ struct SyncNudgeBar: View {
         var tapBarOne: () -> Void
         /// The bar boundary nearest the cursor starts now.
         var tap: () -> Void
+        /// Start listening to the video to sync automatically, or stop and sync with what was heard.
+        var listen: () -> Void
         /// Called while the stretch slider moves (0.90–1.10).
         var stretch: (Double) -> Void
         var setPerBar: (Bool) -> Void
@@ -28,6 +31,11 @@ struct SyncNudgeBar: View {
     var canTap = true
     /// Feedback for the last tap, e.g. "Bar 12 → 0:23.456".
     var tapFeedback: String?
+    /// Where the automatic sync is.
+    enum Listening { case idle, listening, aligning }
+    var listening = Listening.idle
+    /// Progress or outcome of the automatic sync.
+    var listenStatus: String?
     let actions: Actions
 
     static let stretchRange = 0.90...1.10
@@ -60,6 +68,10 @@ struct SyncNudgeBar: View {
 
                 Spacer(minLength: 4)
 
+                Button(listening == .listening ? "Stop & Sync" : "Listen",
+                       systemImage: listening == .listening ? "stop.circle" : "ear", action: actions.listen)
+                    .help("Play the video from its start and listen to it: every bar is placed where it's heard")
+                    .disabled(!canTap || listening == .aligning)
                 Button("Bar 1", systemImage: "1.circle", action: actions.tapBarOne)
                     .help("Bar 1 starts now (⇧T)")
                     .disabled(!canTap)
@@ -74,8 +86,6 @@ struct SyncNudgeBar: View {
                         Button("From Tab File", systemImage: "doc", action: importFromFile)
                     }
                     Button("Paste Per-Bar Points…", systemImage: "doc.on.clipboard", action: actions.pasteBarPoints)
-                    Divider()
-                    Button("Reset Sync", systemImage: "arrow.counterclockwise", role: .destructive, action: actions.reset)
                 } label: {
                     Label("Import", systemImage: "square.and.arrow.down")
                         .labelStyle(.iconOnly)
@@ -83,7 +93,12 @@ struct SyncNudgeBar: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("Import or reset sync")
+                .help("Import sync")
+
+                Button("Reset", systemImage: "arrow.counterclockwise", role: .destructive, action: actions.reset)
+                    .labelStyle(.iconOnly)
+                    .help("Reset sync: no offset, no stretch, no per-bar points")
+                    .disabled(listening != .idle)
             }
 
             HStack(spacing: 8) {
@@ -127,6 +142,16 @@ struct SyncNudgeBar: View {
                     Text(tapFeedback)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
+                }
+            }
+
+            if let listenStatus {
+                HStack(spacing: 6) {
+                    if listening != .idle { ProgressView().controlSize(.mini) }
+                    Text(listenStatus)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }

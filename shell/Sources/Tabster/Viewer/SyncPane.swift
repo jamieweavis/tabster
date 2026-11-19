@@ -23,10 +23,13 @@ private struct SyncPanel: View {
                 sync: model.sync,
                 canTap: model.usingVideoClock,
                 tapFeedback: tapFeedback,
+                listening: listening,
+                listenStatus: model.autoSync.status,
                 actions: .init(
                     nudge: { model.nudgeSync(by: $0) },
                     tapBarOne: { model.tapBarOne() },
                     tap: { model.tapHere() },
+                    listen: { model.toggleAutoSync() },
                     stretch: { model.setStretch($0) },
                     setPerBar: { model.setPerBarSync($0) },
                     importFromFile: model.hasFileSync ? { model.importFileSync() } : nil,
@@ -46,6 +49,14 @@ private struct SyncPanel: View {
         }
         .padding(10)
         .background(.background.secondary, in: .rect(cornerRadius: 10))
+    }
+
+    private var listening: SyncNudgeBar.Listening {
+        switch model.autoSync {
+        case .listening: .listening
+        case .aligning: .aligning
+        case .idle, .finished, .failed: .idle
+        }
     }
 
     private var tapFeedback: String? {

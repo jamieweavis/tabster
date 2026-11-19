@@ -46,7 +46,7 @@ struct TabViewer: View {
                     )
                     Divider()
                 }
-                if model.syncEditing, model.selectedVideo != nil {
+                if model.showsSyncBar {
                     SyncPane(model: model)
                     Divider()
                 }
@@ -73,7 +73,7 @@ struct TabViewer: View {
                 Button("Zoom In") { model.zoom(by: 0.1) }.keyboardShortcut("=", modifiers: .command)
                 Button("Zoom Out") { model.zoom(by: -0.1) }.keyboardShortcut("-", modifiers: .command)
                 Button("Actual Size") { model.resetZoom() }.keyboardShortcut("0", modifiers: .command)
-                if model.syncEditing {
+                if model.showsSyncBar {
                     Button("Tap") { model.tapHere() }.keyboardShortcut("t", modifiers: [])
                     Button("Tap Bar 1") { model.tapBarOne() }.keyboardShortcut("t", modifiers: .shift)
                 }
@@ -208,6 +208,9 @@ private struct ViewerToolbar: ToolbarContent {
         }
         ToolbarSpacer(.flexible)
         ToolbarItem {
+            syncToggle
+        }
+        ToolbarItem {
             playerToggle
         }
         ToolbarItem {
@@ -232,6 +235,16 @@ private struct ViewerToolbar: ToolbarContent {
         }
         .controlGroupStyle(.navigation)
         .help("Zoom (⌘+ / ⌘- / ⌘0)")
+    }
+
+    /// Shows the sync bar (listen, tap, nudge). Needs a video playing to sync to.
+    private var syncToggle: some View {
+        Toggle(isOn: Binding(get: { model.showsSyncBar }, set: { model.syncEditing = $0 })) {
+            Label("Sync to Video", systemImage: "ear")
+        }
+        .toggleStyle(.button)
+        .help(model.hearingVideo ? "Show the sync bar: line the tab up with its video" : "Turn on a video to sync the tab to it")
+        .disabled(!model.hearingVideo)
     }
 
     /// Pins the player bar; off, it hides until the pointer nears the bottom of the tab.

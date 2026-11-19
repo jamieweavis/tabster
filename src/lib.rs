@@ -3,6 +3,7 @@
 
 uniffi::setup_scaffolding!();
 
+pub mod audio_sync;
 pub mod config;
 pub mod formats;
 mod import;
@@ -24,6 +25,7 @@ use std::time::Duration;
 
 use parking_lot::{Mutex, RwLock};
 
+use crate::audio_sync::{AudioCapture, AudioSync, AudioSyncError};
 use crate::config::{Config, ConfigSaver};
 use crate::import::ScanIndex;
 use crate::layout::{Cursor, DisplayList, LayoutOptions};
@@ -34,7 +36,7 @@ use crate::library::{
 use crate::model::Score;
 use crate::playback::{SynthError, TabSynth};
 use crate::player_server::PlayerServer;
-use crate::sync::{SyncMap, SyncPoint, SyncSpec};
+use crate::sync::{BarCoverage, SyncMap, SyncPoint, SyncSpec};
 use crate::timeline::Timeline;
 use crate::video_search::client::Searcher;
 use crate::video_search::finder::{FinderHost, VideoFinder};
@@ -901,9 +903,20 @@ impl TabSession {
         self.state.lock().sync.to_points(&self.timeline)
     }
 
+    /// What a listen covered in `spec`, per played bar (empty if nothing in it was heard).
+    pub fn sync_coverage(&self, spec: SyncSpec) -> Vec<BarCoverage> {
+        sync::coverage(&spec, self.timeline.played_bars().len())
+    }
+
     /// The sync points stored in the tab file itself, if any.
     pub fn file_sync(&self) -> Option<SyncSpec> {
         sync::from_file_sync_points(&self.score, &self.timeline)
+    }
+
+    /// Work out a per-bar sync for the video `capture` was heard from (see [`audio_sync`]).
+    /// Takes seconds: call it off the main thread.
+    pub fn sync_from_audio(&self, capture: Arc<AudioCapture>) -> Result<AudioSync, AudioSyncError> {
+        audio_sync::sync_from_capture(&self.score, &self.timeline, &capture)
     }
 
     pub fn video_to_score(&self, video_secs: f64) -> f64 {

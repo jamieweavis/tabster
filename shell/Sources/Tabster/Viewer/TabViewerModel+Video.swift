@@ -123,7 +123,6 @@ extension TabViewerModel {
                 select(next)
             } else {
                 applySync(.offset(offsetSecs: 0, stretch: 1), persist: false)
-                syncEditing = false
                 updateClockSource()
             }
         } catch {
@@ -287,11 +286,18 @@ extension TabViewerModel {
 
     var hasFileSync: Bool { session?.fileSync() != nil }
 
+    /// The played bars the current sync says were found by listening.
+    private var heardBars: Set<UInt32> {
+        guard case let .points(points) = sync else { return [] }
+        return Set(points.lazy.filter(\.heard).map(\.playedBar))
+    }
+
     /// Apply `spec` to the session now; persist it for the selected video (debounced 300 ms).
     func applySync(_ spec: SyncSpec, persist: Bool = true) {
         sync = spec
         session?.setSync(spec: spec)
         barVideoTimes = session?.syncPoints().map(\.videoSecs) ?? []
+        syncCoverage = session?.syncCoverage(spec: spec) ?? []
         syncRevision &+= 1
         if let id = selectedVideoID, let i = videos.firstIndex(where: { $0.id == id }), videos[i].sync != spec {
             videos[i].sync = spec
@@ -338,7 +344,9 @@ extension TabViewerModel {
         case let .offset(offset, stretch):
             applySync(.offset(offsetSecs: offset + delta, stretch: stretch))
         case let .points(points):
-            applySync(.points(points: points.map { SyncPoint(playedBar: $0.playedBar, videoSecs: $0.videoSecs + delta) }))
+            applySync(.points(points: points.map { 
+                SyncPoint(playedBar: $0.playedBar, videoSecs: $0.videoSecs + delta, heard: $0.heard)
+            }))
         }
     }
 
@@ -379,7 +387,13 @@ extension TabViewerModel {
                                            to: v, keyframes: syncKeyframes)
         else { return false }
         syncKeyframes.insert(k)
-        applySync(.points(points: out.enumerated().map { SyncPoint(playedBar: UInt32($0.offset), videoSecs: $0.element) }))
+        // Bars this moves are placed by hand now; the rest stay as they were heard.
+        let before = barVideoTimes
+        let heard = heardBars
+        applySync(.points(points: out.enumerated().map { i, video in
+            let kept = i != k && heard.contains(UInt32(i)) && before.indices.contains(i) && abs(video - before[i]) < 1e-6
+            return SyncPoint(playedBar: UInt32(i), videoSecs: video, heard: kept)
+        }))
         return true
     }
 
@@ -417,6 +431,8 @@ extension TabViewerModel {
 
     func resetSync() {
         syncKeyframes = []
+        // The last listen's result no longer describes the sync.
+        if case .listening = autoSync {} else if case .aligning = autoSync {} else { autoSync = .idle }
         applySync(.offset(offsetSecs: 0, stretch: 1))
     }
 
@@ -428,7 +444,8 @@ extension TabViewerModel {
         var i = first
         while i < barVideoTimes.count, barVideoTimes[i] <= range.upperBound {
             marks.append(SyncRulerMark(playedBar: i, masterBar: playedBars[i].masterBar, video: barVideoTimes[i],
-                                       isKeyframe: syncKeyframes.contains(i)))
+                                       isKeyframe: syncKeyframes.contains(i),
+                                       coverage: syncCoverage.indices.contains(i) ? syncCoverage[i] : nil))
             i += 1
         }
         return marks

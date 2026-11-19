@@ -90,7 +90,12 @@ final class TabViewerModel {
     /// A YouTube video drives playback (false: the internal clock, e.g. no video or it failed).
     var usingVideoClock = false
     /// The sync editor (nudge bar, ruler) is open.
-    var syncEditing = false
+    /// The sync bar is wanted. Remembered across tabs, like the player bar; it only shows
+    /// while there's a video to sync to (`showsSyncBar`).
+    var syncEditing = UserDefaults.standard.bool(forKey: "viewer.showSync") {
+        didSet { UserDefaults.standard.set(syncEditing, forKey: "viewer.showSync") }
+    }
+    var showsSyncBar: Bool { syncEditing && hearingVideo }
     /// The Find a YouTube Video sheet.
     var showVideoFinder = false
     /// A video the background search found but didn't attach, offered while the tab has none.
@@ -100,8 +105,13 @@ final class TabViewerModel {
     var showPointsSheet = false
     /// Bumped on every sync change, so views that draw the sync (the ruler) refresh.
     var syncRevision = 0
+    /// What a listen covered, per played bar; empty when nothing in the sync was heard.
+    var syncCoverage: [BarCoverage] = []
     /// The last sync tap (played bar, video time, host time), for feedback in the sync bar.
     var lastTap: (bar: Int, video: Double, at: Double)?
+    /// Automatic sync by listening to the video (see TabViewerModel+AutoSync.swift).
+    var autoSync: AutoSyncState = .idle
+    @ObservationIgnored var syncListener: SyncListener?
 
     var duration: Double { info?.durationSecs ?? 0 }
     var currentTrack: TrackInfo? { info?.tracks.first { $0.index == track } }
@@ -129,7 +139,6 @@ final class TabViewerModel {
     var videoAudio = UserDefaults.standard.object(forKey: "videoAudio") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(videoAudio, forKey: "videoAudio")
-            if !videoAudio { syncEditing = false }
             updateClockSource()
             if videoAudio, tabAudio { tabAudio = false }
         }
@@ -779,6 +788,7 @@ final class TabViewerModel {
             isPlaying = false
             sink?.playingChanged(false)
         }
+        cancelAutoSync()
         saveTask?.cancel()
         resizeTask?.cancel()
         flushSyncSave(synchronously: synchronously)

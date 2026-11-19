@@ -26,6 +26,9 @@
     <true/>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.music</string>
+    <!-- Automatic sync listens to the video through a Core Audio tap (SystemAudioTap.swift). -->
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Tabster listens to the video you're playing to line the tab up with it. The audio is analysed on your Mac and never saved.</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

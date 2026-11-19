@@ -32,6 +32,8 @@ CONFIG=release just app # optimised universal (arm64 + x86_64) build; `just dmg`
 - `cargo run --example render_svg -- <tab file> <track> <out.svg>` renders a track's layout to SVG.
 - `cargo run --example yt_search -- "<artist>" "<title>" <m:ss> [response.json]` searches YouTube (or
   ranks a saved `youtubei/v1/search` response) and prints how the matcher scores each result.
+- `cargo run --release --example audio_sync -- <tab file> <recording.wav> [video secs]` aligns a WAV
+  to a tab and prints per-bar points (the JSON "Paste Per-Bar Points…" takes).
 - `UNIVERSAL=1` (default for release) builds the core for both `aarch64-` and `x86_64-apple-darwin`,
   `lipo`s them into `build/universal/<config>/`, and passes `--arch arm64 --arch x86_64` to SwiftPM
   (which warns that x86_64 is deprecated for the host's macOS: harmless, minos stays 26.0).
@@ -52,6 +54,10 @@ CONFIG=release just app # optimised universal (arm64 + x86_64) build; `just dmg`
 - `timeline` — repeats/endings/jumps unrolled into *played bars*; ticks ↔ score seconds.
 - `sync` — `SyncSpec` (offset+stretch, or one video time per played bar) → `SyncMap`
   (piecewise-linear score seconds ↔ video seconds).
+- `audio_sync` — automatic sync (spike): `AudioCapture` reduces tapped system audio to onset/chroma
+  features, `reference` predicts the same from the tab's note events, `align` finds the bars
+  (coarse chroma alignment, then per-bar onset correlation) → `SyncSpec::Points`. The shell's
+  `SystemAudioTap` (Core Audio process tap) feeds it; nothing is fetched from YouTube.
 - `layout` — track → `DisplayList`; `cursor()` and `hit_test()` against it.
 - `library` — SQLite catalogue, content-addressed file store, parse cache, tags, setlists, videos,
   video searches.

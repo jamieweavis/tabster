@@ -18,6 +18,7 @@ fn points(pairs: &[(u32, f64)]) -> SyncSpec {
         points: pairs
             .iter()
             .map(|&(played_bar, video_secs)| SyncPoint {
+                heard: false,
                 played_bar,
                 video_secs,
             })
@@ -291,4 +292,37 @@ proptest! {
         let m = SyncMap::new(&SyncSpec::Offset { offset_secs: offset, stretch }, &timeline(2));
         prop_assert!((m.video_to_score(m.score_to_video(x)) - x).abs() < 1e-9);
     }
+}
+
+#[test]
+fn coverage_shows_what_a_listen_heard() {
+    let point = |played_bar, heard| SyncPoint {
+        played_bar,
+        video_secs: f64::from(played_bar),
+        heard,
+    };
+    let spec = SyncSpec::Points {
+        points: vec![
+            point(0, false),
+            point(1, true),
+            point(2, false),
+            point(3, true),
+            point(4, false),
+            point(9, true),
+        ],
+    };
+    use BarCoverage::{Between, Beyond, Heard};
+    assert_eq!(coverage(&spec, 5), [Beyond, Heard, Between, Heard, Beyond]);
+    // Nothing heard: nothing to show.
+    assert!(coverage(&SyncSpec::default(), 5).is_empty());
+    assert!(coverage(&from_bar_points(&[0.0, 2.0]), 5).is_empty());
+}
+
+#[test]
+fn points_saved_before_listening_existed_still_load() {
+    let old = r#"{"Points":{"points":[{"played_bar":0,"video_secs":1.5}]}}"#;
+    let spec: SyncSpec = serde_json::from_str(old).unwrap();
+    assert_eq!(spec, from_bar_points(&[1.5]));
+    // And a point that wasn't heard is written the way it always was.
+    assert_eq!(serde_json::to_string(&spec).unwrap(), old);
 }

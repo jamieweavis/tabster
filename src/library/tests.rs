@@ -601,10 +601,12 @@ fn video_sync_round_trips() {
                 SyncPoint {
                     played_bar: 0,
                     video_secs: 1.5,
+                    heard: false,
                 },
                 SyncPoint {
                     played_bar: 7,
                     video_secs: 19.125,
+                    heard: true,
                 },
             ],
         },

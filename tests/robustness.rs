@@ -113,10 +113,12 @@ fn exercise(score: &Score, budget: Elapsed) {
                 SyncPoint {
                     played_bar: 0,
                     video_secs: 1.0,
+                    heard: false,
                 },
                 SyncPoint {
                     played_bar: 3,
                     video_secs: 9.0,
+                    heard: false,
                 },
             ],
         },

@@ -37,6 +37,51 @@ pub struct SyncPoint {
     /// Index into `Timeline::played_bars()`.
     pub played_bar: u32,
     pub video_secs: f64,
+    /// The bar was found by listening to the video (see `crate::audio_sync`), rather than
+    /// placed by hand or by carrying a tempo on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[uniffi(default = false)]
+    pub heard: bool,
+}
+
+/// How a played bar came by its place in a per-bar sync, for showing what a listen covered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum BarCoverage {
+    /// Found by listening.
+    Heard,
+    /// Not found itself, but between bars that were.
+    Between,
+    /// Outside everything that was heard: its place is a tempo carried on.
+    Beyond,
+}
+
+/// The coverage of each of `bars` played bars under `spec`. Empty when nothing in it was
+/// heard (an offset, or points placed by hand).
+pub fn coverage(spec: &SyncSpec, bars: usize) -> Vec<BarCoverage> {
+    let SyncSpec::Points { points } = spec else {
+        return Vec::new();
+    };
+    let mut out = vec![BarCoverage::Beyond; bars];
+    let mut heard = points
+        .iter()
+        .filter(|p| p.heard && (p.played_bar as usize) < bars)
+        .map(|p| p.played_bar as usize);
+    let Some(mut first) = heard.next() else {
+        return Vec::new();
+    };
+    let mut last = first;
+    out[first] = BarCoverage::Heard;
+    for bar in heard {
+        out[bar] = BarCoverage::Heard;
+        first = first.min(bar);
+        last = last.max(bar);
+    }
+    for slot in &mut out[first..=last] {
+        if *slot == BarCoverage::Beyond {
+            *slot = BarCoverage::Between;
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Default)]
@@ -194,6 +239,7 @@ impl SyncMap {
             .map(|(i, b)| SyncPoint {
                 played_bar: i as u32,
                 video_secs: self.score_to_video(b.start_secs),
+                heard: false,
             })
             .collect()
     }
@@ -213,6 +259,7 @@ pub fn from_bar_points(points: &[f64]) -> SyncSpec {
             .map(|(i, &video_secs)| SyncPoint {
                 played_bar: i as u32,
                 video_secs,
+                heard: false,
             })
             .collect(),
     }
@@ -272,6 +319,7 @@ pub fn from_file_sync_points(score: &Score, timeline: &Timeline) -> Option<SyncS
             SyncPoint {
                 played_bar: p.0 as u32,
                 video_secs: p.2 - (p.1 - p.3) * slope,
+                heard: false,
             }
         })
         .collect();

@@ -270,13 +270,6 @@ struct VideoPanel: View {
                 model.showVideoFinder = true
             }
             .help("Search YouTube for this song, or paste a link")
-
-            Button(model.syncEditing ? "Stop Syncing" : "Sync Tab to Video…", systemImage: "arrow.left.and.right") {
-                model.showVideoOptions = false
-                model.syncEditing.toggle()
-            }
-            .help(model.hearingVideo ? "Line the tab's bars up with the video" : "Turn on a video to sync the tab to it")
-            .disabled(!model.hearingVideo)
         }
     }
 

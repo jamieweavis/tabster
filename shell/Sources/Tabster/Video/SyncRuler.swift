@@ -7,6 +7,8 @@ struct SyncRulerMark: Identifiable {
     let masterBar: UInt32
     let video: Double
     let isKeyframe: Bool
+    /// What a listen made of the bar, when the sync came from one.
+    var coverage: BarCoverage?
     var id: Int { playedBar }
 }
 
@@ -82,7 +84,13 @@ struct SyncRuler: View {
         for mark in marks(range(center: center)) {
             let px = x(mark.video)
             let dragging = drag?.mark == mark.playedBar
-            let color: Color = dragging ? .accentColor : mark.isKeyframe ? .accentColor : .primary.opacity(0.55)
+            // After a listen: heard bars in green, bars whose tempo was only carried on faint.
+            let plain: Color = switch mark.coverage {
+            case .heard: .green
+            case .beyond: .primary.opacity(0.25)
+            case .between, nil: .primary.opacity(0.55)
+            }
+            let color: Color = dragging || mark.isKeyframe ? .accentColor : plain
             var line = Path()
             line.move(to: CGPoint(x: px, y: 15))
             line.addLine(to: CGPoint(x: px, y: size.height))
