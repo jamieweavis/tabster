@@ -622,6 +622,47 @@ fn video_sync_round_trips() {
 }
 
 #[test]
+fn tracking_lasts_as_long_as_the_sync_a_listen_made() {
+    let f = Fixture::new();
+    let tab = f.add("a.gp", "Alpha|X|");
+    let video = f.library.add_video(tab, "aaaaaaaaaaa", "").unwrap();
+    let tracking = || {
+        let of_video = f.library.videos(tab).unwrap()[0].tracking;
+        assert_eq!(f.library.get(tab).unwrap().tracking, of_video);
+        of_video
+    };
+    let points = |heard| SyncSpec::Points {
+        points: vec![SyncPoint {
+            played_bar: 0,
+            video_secs: 1.5,
+            heard,
+        }],
+    };
+    assert_eq!(tracking(), None);
+
+    // A listen saves its sync and how well it tracks.
+    assert!(!f.library.set_video_sync(video, &points(true)).unwrap());
+    f.library.set_video_tracking(video, 0.68).unwrap();
+    assert_eq!(tracking(), Some(0.68));
+    // Nudged: still the listen's sync.
+    assert!(!f.library.set_video_sync(video, &points(true)).unwrap());
+    assert_eq!(tracking(), Some(0.68));
+    // Reset: not any more.
+    assert!(
+        f.library
+            .set_video_sync(video, &SyncSpec::default())
+            .unwrap()
+    );
+    assert_eq!(tracking(), None);
+    assert!(!f.library.set_video_sync(video, &points(false)).unwrap());
+
+    assert!(matches!(
+        f.library.set_video_tracking(999, 0.5),
+        Err(LibraryError::NotFound)
+    ));
+}
+
+#[test]
 fn practice_state() {
     let f = Fixture::new();
     let tab = f.add("a.gp", "Alpha|X|");

@@ -288,7 +288,17 @@ impl Core {
     }
 
     pub fn set_video_sync(&self, id: VideoId, sync: SyncSpec) -> Result<(), CoreError> {
-        Ok(self.shared.library.set_video_sync(id, &sync)?)
+        if self.shared.library.set_video_sync(id, &sync)? {
+            self.changed();
+        }
+        Ok(())
+    }
+
+    /// Record how well a video's sync, just made by listening to it, tracks the tab (0…1).
+    pub fn set_video_tracking(&self, id: VideoId, tracking: f64) -> Result<(), CoreError> {
+        self.shared.library.set_video_tracking(id, tracking)?;
+        self.changed();
+        Ok(())
     }
 
     /// Search YouTube for these tabs' videos in the background, ahead of automatic searches.

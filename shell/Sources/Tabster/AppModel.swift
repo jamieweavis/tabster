@@ -226,7 +226,10 @@ struct ImportProgress: Equatable {
     var total: UInt32
 }
 
-extension TabSummary: Identifiable {}
+extension TabSummary: Identifiable {
+    /// `tracking` for sorting: tabs never synced by listening come first.
+    var trackingOrder: Double { tracking ?? -1 }
+}
 
 /// Receives the core's library callbacks on background threads and forwards them, in order, to
 /// the main actor.

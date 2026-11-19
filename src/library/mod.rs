@@ -55,6 +55,8 @@ pub struct TabSummary {
     pub finding_video: bool,
     /// A search found a likely video but didn't attach it (and it wasn't dismissed).
     pub video_suggested: bool,
+    /// How well the default video's sync tracks the tab (0…1), when it was made by listening.
+    pub tracking: Option<f64>,
     pub tags: Vec<String>,
     /// Unix seconds.
     pub imported_at: i64,
@@ -99,6 +101,8 @@ pub struct Video {
     pub label: String,
     pub is_default: bool,
     pub sync: SyncSpec,
+    /// How well `sync` tracks the tab (0…1), when it was made by listening to the video.
+    pub tracking: Option<f64>,
     /// The video's YouTube title and channel, when it was attached from a search (else empty).
     pub title: String,
     pub channel: String,
@@ -179,7 +183,9 @@ const SUMMARY_COLUMNS: &str = "t.id, t.title, t.artist, t.album, t.format, t.tun
     t.imported_at, t.last_opened_at,
     EXISTS (SELECT 1 FROM video_searches s WHERE s.tab_id = t.id AND s.state = 'pending'),
     EXISTS (SELECT 1 FROM video_searches s WHERE s.tab_id = t.id AND s.suggested
-      AND NOT s.dismissed AND NOT EXISTS (SELECT 1 FROM videos v WHERE v.tab_id = t.id))";
+      AND NOT s.dismissed AND NOT EXISTS (SELECT 1 FROM videos v WHERE v.tab_id = t.id)),
+    (SELECT v.tracking FROM videos v WHERE v.tab_id = t.id
+      ORDER BY v.is_default DESC, v.id LIMIT 1)";
 
 type ParseFn<'a> = &'a dyn Fn(&[u8], Option<&str>) -> Result<Score, ParseError>;
 
@@ -528,7 +534,8 @@ impl Library {
     pub fn videos(&self, tab: TabId) -> Result<Vec<Video>, LibraryError> {
         let reader = self.reader.lock();
         let mut statement = reader.prepare(
-            "SELECT id, tab_id, youtube_id, label, is_default, sync, title, channel, duration_secs
+            "SELECT id, tab_id, youtube_id, label, is_default, sync, title, channel, duration_secs,
+                    tracking
              FROM videos WHERE tab_id = ?1 ORDER BY id",
         )?;
         let rows = statement.query_map([tab], video_from_row)?;
@@ -609,10 +616,34 @@ impl Library {
         Ok(())
     }
 
-    pub fn set_video_sync(&self, id: VideoId, sync: &SyncSpec) -> Result<(), LibraryError> {
-        let changed = self.writer.lock().execute(
+    /// Save a video's sync. A sync with nothing heard in it (reset, typed in, an offset) is no
+    /// longer the one a listen made, so the video's tracking goes with it: `true` if it did.
+    pub fn set_video_sync(&self, id: VideoId, sync: &SyncSpec) -> Result<bool, LibraryError> {
+        let heard = matches!(sync, SyncSpec::Points { points } if points.iter().any(|p| p.heard));
+        let writer = self.writer.lock();
+        let cleared = !heard
+            && writer.execute(
+                "UPDATE videos SET tracking = NULL WHERE id = ?1 AND tracking IS NOT NULL",
+                [id],
+            )? > 0;
+        let changed = writer.execute(
             "UPDATE videos SET sync = ?2 WHERE id = ?1",
             params![id, sync_json(sync)?],
+        )?;
+        found(changed)?;
+        Ok(cleared)
+    }
+
+    /// Record how well a video's sync, just made by listening, tracks the tab (0…1).
+    pub fn set_video_tracking(&self, id: VideoId, tracking: f64) -> Result<(), LibraryError> {
+        let tracking = if tracking.is_finite() {
+            tracking.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let changed = self.writer.lock().execute(
+            "UPDATE videos SET tracking = ?2 WHERE id = ?1",
+            params![id, tracking],
         )?;
         found(changed)
     }
@@ -831,6 +862,7 @@ fn summary_from_row(row: &Row) -> rusqlite::Result<TabSummary> {
         has_video: row.get(10)?,
         finding_video: row.get(14)?,
         video_suggested: row.get(15)?,
+        tracking: row.get(16)?,
         tags,
         imported_at: row.get(12)?,
         last_opened_at: row.get(13)?,
@@ -846,6 +878,7 @@ fn video_from_row(row: &Row) -> rusqlite::Result<Video> {
         label: row.get(3)?,
         is_default: row.get(4)?,
         sync: serde_json::from_str(&sync).unwrap_or_default(),
+        tracking: row.get(9)?,
         title: row.get(6)?,
         channel: row.get(7)?,
         duration_secs: row.get(8)?,

@@ -68,6 +68,16 @@ struct TabTable: View {
             }
             .width(min: 46, ideal: 56, max: 80)
             .customizationID("practice")
+            TableColumn("Tracking", value: \.trackingOrder) { tab in
+                if let tracking = tab.tracking {
+                    Text("\(Int((tracking * 100).rounded()))%")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .help("How well the tab tracks its video, from listening to it")
+                }
+            }
+            .width(min: 46, ideal: 56, max: 80)
+            .customizationID("tracking")
             TableColumn(Self.iconHeader("play.rectangle", "YouTube Video")) { (tab: TabSummary) in
                 if tab.hasVideo {
                     Image(systemName: "play.rectangle")

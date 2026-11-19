@@ -150,7 +150,16 @@ extension TabViewerModel {
                 }
                 self.syncKeyframes = []
                 self.applySync(found.sync)
+                // Save the sync first: saving one with nothing heard in it would clear the tracking.
                 self.flushSyncSave(synchronously: true)
+                do {
+                    try self.core.setVideoTracking(id: videoID, tracking: found.confidence)
+                    if let i = self.videos.firstIndex(where: { $0.id == videoID }) {
+                        self.videos[i].tracking = found.confidence
+                    }
+                } catch {
+                    ViewerLog.log.error("Saving the tracking failed: \(error)")
+                }
                 self.autoSync = .finished(Self.summary(of: found, bars: self.playedBars.count))
             case let .failure(error):
                 ViewerLog.log.notice("Auto sync failed: \(String(describing: error), privacy: .public)")

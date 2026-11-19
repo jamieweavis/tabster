@@ -6,7 +6,7 @@ use rusqlite::{Connection, TransactionBehavior};
 use super::LibraryError;
 
 /// Each step runs in its own transaction, together with the `user_version` bump.
-const MIGRATIONS: &[&str] = &[V1, V2, V3];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
 
 const V1: &str = "
 CREATE TABLE tabs (
@@ -151,6 +151,12 @@ CREATE INDEX video_searches_pending ON video_searches (queued_at) WHERE state = 
 ALTER TABLE videos ADD COLUMN title TEXT NOT NULL DEFAULT '';
 ALTER TABLE videos ADD COLUMN channel TEXT NOT NULL DEFAULT '';
 ALTER TABLE videos ADD COLUMN duration_secs REAL;
+";
+
+/// How well a video's sync, made by listening to it, tracks the tab.
+const V4: &str = "
+-- 0…1 (`audio_sync::AudioSync::confidence`); NULL when the sync wasn't made by listening.
+ALTER TABLE videos ADD COLUMN tracking REAL;
 ";
 
 /// Bring the database up to the latest schema. Refuses a database from a newer Tabster.
