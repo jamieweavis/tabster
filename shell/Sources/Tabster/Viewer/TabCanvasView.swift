@@ -348,6 +348,7 @@ final class TabDocumentView: NSView {
         case .leftArrow?: model.previousBar(); return
         case .rightArrow?: model.nextBar(); return
         case .delete?: model.rewind(); return
+        case .carriageReturn?, .enter?, .newline?: model.togglePlay(); return
         case .upArrow?, .downArrow?:
             // Step through the tab list, as if it had focus. Changing tab rebuilds the viewer,
             // which takes focus back, so holding the key keeps stepping.
