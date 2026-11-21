@@ -183,7 +183,14 @@
     },
     play() { if (player) player.playVideo(); },
     pause() { if (player) player.pauseVideo(); },
-    seek(secs) { if (player) { player.seekTo(secs, true); sample(); } },
+    /** seekTo plays a video that's cued, unstarted or ended (it only stays put while paused), so
+     *  those re-cue at the new time instead and wait for play(). */
+    seek(secs) {
+      if (!player) return;
+      if (lastState === 1 || lastState === 2 || lastState === 3) player.seekTo(secs, true);
+      else player.cueVideoById({ videoId: currentId, startSeconds: secs });
+      sample();
+    },
     /** Returns the rate YouTube will apply (it snaps to getAvailablePlaybackRates()). */
     setRate(r) { if (!player) return 1; player.setPlaybackRate(r); return player.getPlaybackRate(); },
     rates() { return player ? player.getAvailablePlaybackRates() : []; },
