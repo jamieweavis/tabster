@@ -52,6 +52,11 @@ struct LibraryView: View {
         @Bindable var model = model
         NavigationSplitView(columnVisibility: $columnVisibility) {
             TabTable()
+                // A hairline against the tab pane, like the one above the status bar.
+                .overlay(alignment: .trailing) {
+                    HStack(spacing: 0) { Divider() }
+                        .ignoresSafeArea()
+                }
                 .navigationSplitViewColumnWidth(min: Self.listMinWidth, ideal: 600)
                 .toolbar {
                     // Heads the list; goes with it when it's hidden (the window's title takes over).

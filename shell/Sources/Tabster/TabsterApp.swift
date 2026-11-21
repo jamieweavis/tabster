@@ -33,10 +33,19 @@ struct TabsterApp: App {
     }
 }
 
+enum StatusBarSetting {
+    static let key = "library.showStatusBar"
+}
+
 struct LibraryCommands: Commands {
     let model: AppModel
+    @AppStorage(StatusBarSetting.key) private var showStatusBar = true
 
     var body: some Commands {
+        CommandGroup(after: .toolbar) {
+            Button(showStatusBar ? "Hide Status Bar" : "Show Status Bar") { showStatusBar.toggle() }
+                .keyboardShortcut("/")
+        }
         // The library is one window over shared state, so File ▸ New Window would only confuse.
         CommandGroup(replacing: .newItem) {
             Button("Import…") { model.importURLs(ImportPanel.run()) }

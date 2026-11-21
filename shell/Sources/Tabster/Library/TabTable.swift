@@ -23,6 +23,8 @@ struct TabTable: View {
     /// False until `ColumnAutosizer` has stopped the columns autoresizing: the table's first layout
     /// stretches them to fill it, and that mustn't overwrite the saved widths.
     @State private var layoutSettled = false
+    /// View ▸ Show Status Bar.
+    @AppStorage(StatusBarSetting.key) private var showStatusBar = true
     /// Below this the table is collapsing (the list's minimum width is 240).
     private static let usableWidth: CGFloat = 200
 
@@ -110,6 +112,9 @@ struct TabTable: View {
             layoutSettled = true
         })
         .safeAreaInset(edge: .top, spacing: 0) { searchBar }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if showStatusBar { statusBar }
+        }
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { width in
             let wasUsable = tableWidth >= Self.usableWidth
             tableWidth = width
@@ -200,6 +205,37 @@ struct TabTable: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(.bar)
+    }
+
+    /// Below the table: the settings cog, then how many tabs are listed and how long they've been practised.
+    private var statusBar: some View {
+        let count = model.tabs.count
+        let practised = model.tabs.reduce(0) { $0 + (practice[$1.id] ?? 0) }
+        return HStack(spacing: 6) {
+            SettingsLink {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 15))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help("Settings")
+            .accessibilityLabel("Settings")
+            Spacer(minLength: 0)
+            Text(verbatim: "\(count) tab\(count == 1 ? "" : "s")"
+                + (practised > 0 ? " · \(PracticeFormat.duration(practised)) practised" : ""))
+            Spacer(minLength: 0)
+            // Balances the cog so the text stays centred.
+            Color.clear.frame(width: 24, height: 24)
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+        .lineLimit(1)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
     }
 
     @ViewBuilder
