@@ -235,6 +235,8 @@ extension TabViewerModel {
             listener.pump?.cancel()
             listener.tap.stop()
             syncListener = nil
+            // Still playing without the listener (the video changed): that's practice again.
+            practicePlayingChanged()
         }
         autoSync = .idle
     }

@@ -97,11 +97,12 @@ extension TabViewerModel {
 
     // MARK: - Practice time
 
-    /// Time the playing, writing it every ~30 s and when playback stops.
+    /// Time the playing, writing it every ~30 s and when playback stops. Playing to auto sync
+    /// (listening to the video) isn't practice and isn't timed.
     func practicePlayingChanged() {
         let now = CACurrentMediaTime()
         practiceFlushTask?.cancel()
-        if isPlaying {
+        if isPlaying, syncListener == nil {
             practiceTimer.start(at: now)
             practiceFlushTask = Task { [weak self] in
                 while !Task.isCancelled {
