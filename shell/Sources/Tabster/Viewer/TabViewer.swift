@@ -109,6 +109,14 @@ struct TabViewer: View {
             guard bulkSyncTurn != nil, let outcome = await model.syncForBulk(), !Task.isCancelled else { return }
             app?.bulkSyncFinished(tab: tabID, outcome: outcome)
         }
+        // Asked to sync by ear (the guided import's last step): listen once, with the sync bar
+        // up for its progress and Stop & Sync. Cleared when done or when the viewer closes.
+        .task(id: listenToken) {
+            guard let token = listenToken else { return }
+            model.syncEditing = true
+            _ = await model.syncForBulk()
+            if app?.listenRequest?.token == token { app?.listenRequest = nil }
+        }
         .onChange(of: app?.config.showRhythm) { _, on in
             if let on { model.setShowRhythm(on) }
         }
@@ -134,6 +142,12 @@ struct TabViewer: View {
     private var bulkSyncTurn: Int? {
         guard let run = app?.bulkSync, run.current == tabID else { return nil }
         return run.index
+    }
+
+    /// The pending "sync by ear" request for this tab.
+    private var listenToken: UUID? {
+        guard let request = app?.listenRequest, request.tab == tabID else { return nil }
+        return request.token
     }
 
     /// Tells the window header (which shows it while the player bar is hidden) what's open.

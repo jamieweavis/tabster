@@ -11,6 +11,10 @@ struct VideoFinderSheet: View {
     let onAttachMatch: (_ video: VideoCandidate, _ label: String) -> Void
     /// Called with a pasted link's video id and the label.
     let onAttachID: (_ youtubeID: String, _ label: String) -> Void
+    /// Set when the finder is a step of another sheet (the guided import): Cancel becomes Skip,
+    /// which calls this, and attaching leaves closing to the caller.
+    var onSkip: (() -> Void)?
+    var heading = "Find a YouTube Video"
 
     static let suggestedLabels = ["Original", "Live", "Acoustic", "Cover", "Lesson", "Backing Track"]
 
@@ -44,7 +48,7 @@ struct VideoFinderSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Find a YouTube Video").font(.headline)
+            Text(heading).font(.headline)
             searchField
             content
                 .frame(height: 340)
@@ -158,9 +162,15 @@ struct VideoFinderSheet: View {
                     .help("Open this video on YouTube")
             }
             Spacer()
-            Button("Cancel", role: .cancel) { dismiss() }
-                .keyboardShortcut(.cancelAction)
-            Button("Attach", action: attach)
+            if let onSkip {
+                Button("Skip", action: onSkip)
+                    .keyboardShortcut(.cancelAction)
+                    .help("Carry on without a video")
+            } else {
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+            Button(onSkip == nil ? "Attach" : "Attach & Continue", action: attach)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canAttach)
         }
@@ -237,7 +247,7 @@ struct VideoFinderSheet: View {
         } else {
             return
         }
-        dismiss()
+        if onSkip == nil { dismiss() }
     }
 
     private func open(_ match: VideoMatch) {

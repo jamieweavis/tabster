@@ -54,6 +54,11 @@ final class AppModel {
     var errorMessage: String?
     /// Bumped by Edit ▸ Find; the library view focuses its search field.
     private(set) var searchFocusRequest = 0
+    /// The guided import sheet for one file (Library/ImportFlow.swift), while it's shown.
+    var importFlow: ImportFlowRequest?
+    /// Open this tab's video and sync it by listening, once its viewer is up (the guided
+    /// import's last step). The viewer clears it when it's done or closes.
+    var listenRequest: ListenRequest?
 
     // MARK: Settings
 
@@ -144,6 +149,24 @@ final class AppModel {
 
     // MARK: Import
 
+    /// The Import button, ⌘O and drops: one tab file goes through the guided import (tab, then
+    /// video, then sync); several files, or a folder, are imported in one go.
+    func beginImport(_ urls: [URL]) {
+        guard core != nil, !urls.isEmpty else { return }
+        if urls.count == 1, let file = urls.first, !file.hasDirectoryPath {
+            importFlow = ImportFlowRequest(file: file)
+        } else {
+            importURLs(urls)
+        }
+    }
+
+    /// Select a tab, clearing the search if it would hide it.
+    func reveal(_ id: Int64) {
+        // The tab must be in the table to be selected.
+        if !tabs.contains(where: { $0.id == id }) { searchText = "" }
+        selection = id
+    }
+
     /// Imports files and folders in the background. `select` selects the first imported tab.
     func importURLs(_ urls: [URL], select: Bool = false) {
         guard let core, !urls.isEmpty else { return }
@@ -161,11 +184,7 @@ final class AppModel {
                     "couldn't import \(failure.path, privacy: .public): \(failure.error ?? "", privacy: .public)")
             }
             importFailures = failures
-            if select, let id = outcomes.lazy.compactMap(\.id).first {
-                // The tab must be in the table to be selected.
-                if !tabs.contains(where: { $0.id == id }) { searchText = "" }
-                selection = id
-            }
+            if select, let id = outcomes.lazy.compactMap(\.id).first { reveal(id) }
         }
     }
 
@@ -238,6 +257,19 @@ final class AppModel {
 struct ImportProgress: Equatable {
     var done: UInt32
     var total: UInt32
+}
+
+/// One run of the guided import, for one file.
+struct ImportFlowRequest: Identifiable {
+    let id = UUID()
+    let file: URL
+}
+
+/// "Listen to this tab's video and sync it" (`AppModel.listenRequest`); each is new, so asking
+/// again for the tab already open starts another listen.
+struct ListenRequest: Equatable {
+    let tab: Int64
+    let token = UUID()
 }
 
 extension TabSummary: Identifiable {

@@ -64,6 +64,11 @@ struct LibraryView: View {
                         ToolbarItem { AppTitle() }
                             .sharedBackgroundVisibility(.hidden)
                         ToolbarSpacer(.flexible)
+                        // "New thing" at the list's top right, like Mail's Compose.
+                        ToolbarItem {
+                            Button("Import Tab", systemImage: "plus") { model.beginImport(ImportPanel.run()) }
+                                .help("Import a tab and find its video (⌘O)")
+                        }
                     }
                 }
         } detail: {
@@ -109,7 +114,7 @@ struct LibraryView: View {
         }
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter(\.isFileURL)
-            model.importURLs(files)
+            model.beginImport(files)
             return !files.isEmpty
         } isTargeted: { isDropTargeted = $0 }
         .overlay {
@@ -119,6 +124,9 @@ struct LibraryView: View {
                     .padding(4)
                     .allowsHitTesting(false)
             }
+        }
+        .sheet(item: $model.importFlow) { request in
+            ImportFlowSheet(core: core, request: request)
         }
         .sheet(isPresented: Binding(
             get: { !model.importFailures.isEmpty },

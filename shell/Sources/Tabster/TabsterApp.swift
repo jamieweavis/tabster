@@ -48,7 +48,7 @@ struct LibraryCommands: Commands {
         }
         // The library is one window over shared state, so File ▸ New Window would only confuse.
         CommandGroup(replacing: .newItem) {
-            Button("Import…") { model.importURLs(ImportPanel.run()) }
+            Button("Import…") { model.beginImport(ImportPanel.run()) }
                 .keyboardShortcut("o")
                 .disabled(model.core == nil)
         }
