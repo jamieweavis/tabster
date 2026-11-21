@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/jamieweavis/tabster/compare/v0.1.2...v0.1.3) - 2026-11-21
+
+### Added
+
+- viewer display options
+- rework the viewer toolbar's heading
+- sort the library by column headers, with an Added column
+- Return toggles play in the viewer
+- guided import for a single tab
+- add a library status bar with tab count and practice time
+- bulk sync
+- show sync tracking in the library
+- sync tabs to video by listening
+- add app icon
+
+### Fixed
+
+- build the viewer toolbar with Xcode 26
+- seeking a cued or ended video no longer starts it playing
+- don't count auto sync listening as practice
+- run the player bar on the video's timeline
+
 ## [0.1.2](https://github.com/jamieweavis/tabster/compare/v0.1.1...v0.1.2) - 2026-11-17
 
 ### Added
