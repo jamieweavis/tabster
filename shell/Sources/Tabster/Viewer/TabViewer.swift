@@ -290,6 +290,16 @@ private struct ViewerToolbar: ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             followToggle
         }
+        displayItems
+        ToolbarItem(placement: .primaryAction) {
+            zoomButtons
+        }
+    }
+
+    /// The display options, split out of `body`: before the macOS 27 SDK, `ToolbarContentBuilder`
+    /// takes at most ten items in one block (CI builds with Xcode 26).
+    @ToolbarContentBuilder
+    private var displayItems: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             rhythmToggle
         }
@@ -307,9 +317,6 @@ private struct ViewerToolbar: ToolbarContent {
         }
         ToolbarItem(placement: .primaryAction) {
             barDisplayMenu
-        }
-        ToolbarItem(placement: .primaryAction) {
-            zoomButtons
         }
     }
 
