@@ -83,9 +83,9 @@ struct TabViewer: View {
             .accessibilityHidden(true)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .navigationTitle(model.info?.title ?? "")
-        .navigationSubtitle(model.info?.artist ?? "")
-        // The title and artist head the player bar instead; the window keeps them (Window menu).
+        // The window keeps this for the Window menu; the toolbar draws its own "Tabster" (the
+        // system title would sit after the leading items and could clash with the centred heading).
+        .navigationTitle("Tabster")
         .toolbar(removing: .title)
         .toolbar { ViewerToolbar(model: model, app: app, showPlayer: $showPlayer) }
         .modifier(LoopPromptModifier(model: model, prompt: $loopPrompt))
@@ -123,12 +123,8 @@ struct TabViewer: View {
         .onChange(of: app?.config.followCursor) { _, on in
             if let on { model.followCursor = on }
         }
-        .onChange(of: model.info?.title, initial: true) { publishCaption() }
-        .onChange(of: model.info?.artist) { publishCaption() }
         .onDisappear {
             model.close()
-            // A new viewer may already have published its own.
-            if app?.openTab?.tabID == tabID { app?.openTab = nil }
         }
         .onReceive(NotificationCenter.default.publisher(for: .videoSearchFinished)) { note in
             if note.object as? Int64 == tabID { model.videoSearchFinished() }
@@ -148,12 +144,6 @@ struct TabViewer: View {
     private var listenToken: UUID? {
         guard let request = app?.listenRequest, request.tab == tabID else { return nil }
         return request.token
-    }
-
-    /// Tells the window header (which shows it while the player bar is hidden) what's open.
-    private func publishCaption() {
-        guard let app, let info = model.info else { return }
-        app.openTab = OpenTabCaption(tabID: tabID, title: info.title, artist: info.artist)
     }
 
     /// The canvas exists while loading too, so its width is known by the time the session opens
@@ -213,6 +203,29 @@ struct TabViewer: View {
 
 // MARK: - Toolbar
 
+/// The song over its artist, centred in the toolbar while the player bar is hidden.
+private struct SongHeading: View {
+    let title: String
+    let artist: String
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+            if !artist.isEmpty {
+                Text(artist)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .multilineTextAlignment(.center)
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .frame(maxWidth: 320)
+        .padding(.horizontal, 6)
+    }
+}
+
 private struct ViewerToolbar: ToolbarContent {
     let model: TabViewerModel
     /// Nil in the debug harness, where the toggle only affects this viewer.
@@ -226,28 +239,46 @@ private struct ViewerToolbar: ToolbarContent {
     /// chunks. (So the loop controls, and the indicator that comes and goes, live in the player bar.) One
     /// group rather than an item each: separate items are each a glass platter, and cost more.
     var body: some ToolbarContent {
-        // Leading, so a centred window title (list hidden) doesn't push them right.
-        ToolbarItemGroup(placement: .navigation) {
-            trackMenu
-            sectionsMenu
+        ToolbarItem(placement: .navigation) {
+            Text("Tabster")
+                .font(.system(size: 15, weight: .bold))
+                .padding(.horizontal, 6)
         }
-        ToolbarSpacer(.flexible)
-        ToolbarItem {
-            BulkSyncButton(app: app)
+        .sharedBackgroundVisibility(.hidden)
+        // Centred, with the player bar hidden. Always present (empty with the bar shown): without a
+        // principal item the trailing items below pack to the left after "Tabster".
+        ToolbarItem(placement: .principal) {
+            if showPlayer {
+                Color.clear.frame(width: 1, height: 1)
+            } else {
+                SongHeading(title: model.info?.title ?? "", artist: model.info?.artist ?? "")
+            }
         }
-        ToolbarItem {
+        .sharedBackgroundVisibility(.hidden)
+        // All trailing, in this order: with the centred heading present, default-placed items
+        // before it would otherwise split off to its left.
+        // Track and sections share one platter, split by a hairline like the zoom buttons'.
+        ToolbarItem(placement: .primaryAction) {
+            HStack(spacing: 0) {
+                trackMenu
+                Divider()
+                    .frame(height: 16)
+                sectionsMenu
+            }
+        }
+        ToolbarItem(placement: .primaryAction) {
             syncToggle
         }
-        ToolbarItem {
+        ToolbarItem(placement: .primaryAction) {
             playerToggle
         }
-        ToolbarItem {
+        ToolbarItem(placement: .primaryAction) {
             followToggle
         }
-        ToolbarItem {
+        ToolbarItem(placement: .primaryAction) {
             rhythmToggle
         }
-        ToolbarItem {
+        ToolbarItem(placement: .primaryAction) {
             zoomButtons
         }
     }

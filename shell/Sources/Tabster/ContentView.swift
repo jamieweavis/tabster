@@ -30,8 +30,6 @@ struct LibraryView: View {
     /// Whether the tab list is shown beside the viewer (the toolbar's sidebar button).
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     private var listHidden: Bool { columnVisibility == .detailOnly }
-    /// Shared with `TabViewer`'s toggle: with the player bar hidden, its title and artist head the window.
-    @AppStorage("viewer.showPlayer") private var showPlayer = true
 
     /// The tab pane's and the list's minimum widths. The window's minimum is set from them
     /// explicitly: left to the split view, the window shrinks past the list's share and both
@@ -41,12 +39,6 @@ struct LibraryView: View {
     /// The list's current width (with the divider). The split view doesn't narrow the list as the
     /// window shrinks, so the window's minimum keeps room for all of it.
     @State private var listWidth = listMinWidth
-
-    /// The open tab's title and artist, for the header while the player bar is hidden.
-    private var headerCaption: OpenTabCaption? {
-        guard !showPlayer, let open = model.openTab, open.tabID == model.selection else { return nil }
-        return open
-    }
 
     var body: some View {
         @Bindable var model = model
@@ -59,16 +51,15 @@ struct LibraryView: View {
                 }
                 .navigationSplitViewColumnWidth(min: Self.listMinWidth, ideal: 600)
                 .toolbar {
-                    // Heads the list; goes with it when it's hidden (the window's title takes over).
                     if !listHidden {
-                        ToolbarItem { AppTitle() }
-                            .sharedBackgroundVisibility(.hidden)
                         ToolbarSpacer(.flexible)
                         // "New thing" at the list's top right, like Mail's Compose.
                         ToolbarItem {
                             Button("Import Tab", systemImage: "plus") { model.beginImport(ImportPanel.run()) }
                                 .help("Import a tab and find its video (⌘O)")
                         }
+                        // Between Import and the sidebar button (Tahoe puts that at the list's trailing edge).
+                        ToolbarItem { BulkSyncButton(app: model) }
                     }
                 }
         } detail: {
@@ -82,12 +73,6 @@ struct LibraryView: View {
                         systemImage: "music.note.list",
                         description: Text("Choose a tab from the library to open it.")
                     )
-                    // "Tabster" is the title, over the list or centred above everything.
-                    .toolbar(removing: .title)
-                    .toolbar {
-                        ToolbarSpacer(.flexible)
-                        ToolbarItem { BulkSyncButton(app: model) }
-                    }
                 }
             }
             .frame(minWidth: Self.detailMinWidth)
@@ -96,16 +81,6 @@ struct LibraryView: View {
         // Hiding the list shrinks the window instead of widening the tab pane.
         .background(SidebarWindowResizer(sidebarHidden: listHidden) { listWidth = $0 })
         .toolbar {
-            // Centred: "Tabster" (list hidden) over the open tab's title and artist (player hidden).
-            if listHidden || headerCaption != nil {
-                ToolbarItem(placement: .principal) {
-                    VStack(spacing: 0) {
-                        if listHidden { AppTitle() }
-                        if let caption = headerCaption { TabCaption(caption: caption, compact: listHidden) }
-                    }
-                }
-                .sharedBackgroundVisibility(.hidden)
-            }
             if let progress = model.importProgress {
                 ToolbarItem(placement: .status) {
                     ImportProgressView(progress: progress)
@@ -152,31 +127,5 @@ struct LibraryView: View {
         } message: { message in
             Text(message)
         }
-    }
-}
-
-/// "**Title** - Artist", like the player bar's; smaller when it sits under "Tabster".
-private struct TabCaption: View {
-    let caption: OpenTabCaption
-    let compact: Bool
-
-    var body: some View {
-        let title = Text(caption.title).fontWeight(.medium)
-        (caption.artist.isEmpty ? title : Text("\(title) - \(caption.artist)"))
-            .font(.system(size: compact ? 11 : 13))
-            .foregroundStyle(compact ? .secondary : .primary)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .frame(maxWidth: 420)
-            .padding(.horizontal, 6)
-    }
-}
-
-/// "Tabster", heading the window's toolbar.
-private struct AppTitle: View {
-    var body: some View {
-        Text("Tabster")
-            .font(.title3.weight(.semibold))
-            .padding(.horizontal, 6)
     }
 }

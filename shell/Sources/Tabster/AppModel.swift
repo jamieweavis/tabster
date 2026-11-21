@@ -33,8 +33,6 @@ final class AppModel {
             if let run = bulkSync, run.current != selection { stopBulkSync() }
         }
     }
-    /// The open tab's title and artist, published by its viewer (the table's rows may be filtered).
-    var openTab: OpenTabCaption?
 
     // MARK: Bulk sync (see Library/BulkSync.swift)
 
@@ -317,11 +315,4 @@ final class LibraryObserverBridge: LibraryObserver {
 extension Notification.Name {
     /// A tab's background video search finished; `object` is the tab id (`Int64`).
     static let videoSearchFinished = Notification.Name("TabsterVideoSearchFinished")
-}
-
-/// What the window header shows for the open tab while the player bar is hidden.
-struct OpenTabCaption: Equatable {
-    let tabID: Int64
-    let title: String
-    let artist: String
 }
