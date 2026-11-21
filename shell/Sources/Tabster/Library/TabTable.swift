@@ -5,8 +5,10 @@ import SwiftUI
 /// The library's tabs matching the search. Right-click a column header to show or hide columns.
 struct TabTable: View {
     @Environment(AppModel.self) private var model
-    /// Column sorting, applied on top of the core's order. Empty means the core's order.
-    @State private var sortOrder: [KeyPathComparator<TabSummary>] = []
+    /// Column sorting. Starts on Artist, so its header shows the arrow for the order the list
+    /// opens in (the core's artist order, which `ArtistOrder` matches).
+    @State private var sortOrder = [Self.byArtist]
+    private static let byArtist = KeyPathComparator(\TabSummary.self, comparator: ArtistOrder())
     @State private var tagging: TabSummary?
     @State private var deleting: Set<Int64> = []
     /// Practice seconds per tab, for the Practice column.
@@ -45,9 +47,11 @@ struct TabTable: View {
             .width(min: 100, ideal: 170)
             .customizationID("title")
             .disabledCustomizationBehavior(.visibility)
-            TableColumn("Artist", value: \.artist)
-                .width(min: 70, ideal: 110)
-                .customizationID("artist")
+            TableColumn("Artist", sortUsing: Self.byArtist) { tab in
+                Text(tab.artist)
+            }
+            .width(min: 70, ideal: 110)
+            .customizationID("artist")
             TableColumn("Tuning", value: \.tuning) { tab in
                 Text(tab.tuning).foregroundStyle(.secondary)
             }
@@ -80,6 +84,13 @@ struct TabTable: View {
             }
             .width(min: 46, ideal: 56, max: 80)
             .customizationID("tracking")
+            TableColumn("Added", value: \.importedAt) { tab in
+                Text(Self.formatAdded(tab.importedAt))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            .width(min: 60, ideal: 80, max: 120)
+            .customizationID("added")
             TableColumn(Self.iconHeader("play.rectangle", "YouTube Video")) { (tab: TabSummary) in
                 if tab.hasVideo {
                     Image(systemName: "play.rectangle")
@@ -171,36 +182,21 @@ struct TabTable: View {
         case "Tracks": texts = tabs.map { "\($0.trackCount)" }
         case "Length": texts = tabs.map { Self.formatLength($0.durationSecs) }
         case "Practice": texts = practice.values.filter { $0 >= 60 }.map(PracticeFormat.duration)
+        case "Added": texts = tabs.map { Self.formatAdded($0.importedAt) }
+        case "Tracking": texts = tabs.compactMap { $0.tracking.map { "\(Int(($0 * 100).rounded()))%" } }
         default: return nil
         }
-        if ["Tracks", "Length", "Practice"].contains(column) {
+        if ["Tracks", "Length", "Practice", "Tracking", "Added"].contains(column) {
             font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         }
         return texts.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
     }
 
-    /// Search and sort, above the table (below the window's title bar).
+    /// Search, above the table (below the window's title bar).
     private var searchBar: some View {
         @Bindable var model = model
         return HStack(spacing: 6) {
             LibrarySearchField(text: $model.searchText, focusRequest: model.searchFocusRequest)
-            Menu("Sort", systemImage: "arrow.up.arrow.down") {
-                Picker("Sort By", selection: Binding(get: { model.sort }, set: {
-                    model.sort = $0
-                    sortOrder = []
-                })) {
-                    Text("Title").tag(SortOrder.title)
-                    Text("Artist").tag(SortOrder.artist)
-                    Text("Recently Added").tag(SortOrder.recentlyAdded)
-                    Text("Recently Opened").tag(SortOrder.recentlyOpened)
-                }
-                .pickerStyle(.inline)
-            }
-            .labelStyle(.iconOnly)
-            .menuIndicator(.hidden)
-            .buttonStyle(.borderless)
-            .fixedSize()
-            .help("Sort the library")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -283,6 +279,17 @@ struct TabTable: View {
             .accessibilityLabel(name)
     }
 
+    /// "21/11/2026": the day the tab was imported.
+    static func formatAdded(_ unixSecs: Int64) -> String {
+        addedFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(unixSecs)))
+    }
+
+    private static let addedFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd/MM/yyyy"
+        return formatter
+    }()
+
     static func formatLength(_ secs: Double) -> String {
         let total = Int(secs.rounded())
         return String(format: "%d:%02d", total / 60, total % 60)
@@ -304,5 +311,30 @@ private struct FavouriteButton: View {
         .buttonStyle(.borderless)
         .help(tab.favourite ? "Remove from Favourites" : "Add to Favourites")
         .accessibilityLabel(tab.favourite ? "Remove from Favourites" : "Add to Favourites")
+    }
+}
+
+/// The library's artist order, as the core sorts it: tabs without an artist last, then album and
+/// title within an artist.
+struct ArtistOrder: SortComparator {
+    var order: Foundation.SortOrder = .forward
+
+    func compare(_ lhs: TabSummary, _ rhs: TabSummary) -> ComparisonResult {
+        let result = Self.ascending(lhs, rhs)
+        guard order == .reverse else { return result }
+        switch result {
+        case .orderedAscending: return .orderedDescending
+        case .orderedDescending: return .orderedAscending
+        case .orderedSame: return .orderedSame
+        }
+    }
+
+    private static func ascending(_ a: TabSummary, _ b: TabSummary) -> ComparisonResult {
+        if a.artist.isEmpty != b.artist.isEmpty { return a.artist.isEmpty ? .orderedDescending : .orderedAscending }
+        for (x, y) in [(a.artist, b.artist), (a.album, b.album), (a.title, b.title)] {
+            let result = x.localizedCaseInsensitiveCompare(y)
+            if result != .orderedSame { return result }
+        }
+        return a.id == b.id ? .orderedSame : (a.id < b.id ? .orderedAscending : .orderedDescending)
     }
 }

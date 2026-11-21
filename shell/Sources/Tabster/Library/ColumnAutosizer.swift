@@ -103,13 +103,16 @@ struct ColumnAutosizer: NSViewRepresentable {
                   let menu = header.menu(for: event) else { return false }
             menu.delegate?.menuNeedsUpdate?(menu)
             menu.addItem(.separator())
+            // Always listed (disabled over the fixed-width icon columns), so it's where you expect it.
             let index = header.column(at: point)
-            if index >= 0, contentWidth(table.tableColumns[index].title) != nil {
-                let item = NSMenuItem(title: "Size Column to Fit", action: #selector(sizeColumnToFit(_:)), keyEquivalent: "")
+            let column = index >= 0 ? table.tableColumns[index] : nil
+            let item = NSMenuItem(title: "Size Column to Fit", action: nil, keyEquivalent: "")
+            if let column, contentWidth(name(of: column)) != nil {
+                item.action = #selector(sizeColumnToFit(_:))
                 item.target = self
-                item.representedObject = table.tableColumns[index]
-                menu.addItem(item)
+                item.representedObject = column
             }
+            menu.addItem(item)
             let all = NSMenuItem(title: "Size All Columns to Fit", action: #selector(sizeAllColumnsToFit(_:)), keyEquivalent: "")
             all.target = self
             menu.addItem(all)
@@ -125,9 +128,14 @@ struct ColumnAutosizer: NSViewRepresentable {
             for column in table?.tableColumns ?? [] where !column.isHidden { sizeToFit(column) }
         }
 
+        /// The column's header text (SwiftUI may leave `title` empty and set only the header cell).
+        private func name(of column: NSTableColumn) -> String {
+            column.title.isEmpty ? column.headerCell.stringValue : column.title
+        }
+
         /// Sizes `column` to its header and widest content; leaves fixed (icon) columns alone.
         private func sizeToFit(_ column: NSTableColumn) {
-            guard let content = contentWidth(column.title) else { return }
+            guard let content = contentWidth(name(of: column)) else { return }
             // The cell's padding: the gap between the header's text and its divider.
             let padding: CGFloat = 12
             let width = max(column.headerCell.cellSize.width, content + padding)

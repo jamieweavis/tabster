@@ -19,8 +19,8 @@ final class AppModel {
             if searchText != oldValue { scheduleSearch() }
         }
     }
-    /// The core's ordering, used when no table column sort is active.
-    var sort: SortOrder = .title {
+    /// The core's ordering, used when no table column sort is active (column headers sort otherwise).
+    var sort: SortOrder = .artist {
         didSet {
             if sort != oldValue { reloadTabs() }
         }
