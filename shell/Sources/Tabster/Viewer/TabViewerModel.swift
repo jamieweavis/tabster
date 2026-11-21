@@ -60,8 +60,15 @@ final class TabViewerModel {
         let stored = UserDefaults.standard.object(forKey: TabViewerModel.scaleKey) as? Float ?? 1
         return min(max(stored, TabViewerModel.scaleRange.lowerBound), TabViewerModel.scaleRange.upperBound)
     }()
-    /// Follows Preferences (`Config::show_rhythm`); `TabViewer` relays changes.
+    /// Follow Preferences (`Config::show_rhythm`, `show_sections`, `show_tempo`,
+    /// `show_bar_numbers`, `show_annotations`); `TabViewer` relays changes.
     private(set) var showRhythm: Bool = true
+    private(set) var showSections: Bool = true
+    private(set) var showTempo: Bool = true
+    private(set) var showBarNumbers: Bool = true
+    private(set) var showAnnotations: Bool = true
+    /// Bars on each line; 0 = as many as fit. Follows Preferences (`Config::bars_per_row`).
+    private(set) var barsPerRow: UInt32 = 0
     /// Scroll to keep the cursor in view while playing. Follows Preferences
     /// (`Config::follow_cursor`); `TabViewer` relays changes.
     var followCursor: Bool = true
@@ -246,6 +253,11 @@ final class TabViewerModel {
         self.tabID = tabID
         let config = core.config()
         showRhythm = config.showRhythm
+        showSections = config.showSections
+        showTempo = config.showTempo
+        showBarNumbers = config.showBarNumbers
+        showAnnotations = config.showAnnotations
+        barsPerRow = config.barsPerRow
         followCursor = config.followCursor
     }
 
@@ -258,8 +270,7 @@ final class TabViewerModel {
         // Lay out in the same background hop when the canvas width is already known, so the tab
         // appears in the same main-thread pass as the rest of the UI.
         let width = viewportWidth
-        let scale = scale
-        let showRhythm = showRhythm
+        let options = layoutOptions(track: 0)
         let opened = await Task.detached { () -> Result<Opened, Error> in
             do {
                 let start = CACurrentMediaTime()
@@ -273,7 +284,9 @@ final class TabViewerModel {
                 if width > 0 {
                     let track = state.map(\.track).flatMap { t in info.tracks.contains { $0.index == t } ? t : nil }
                         ?? info.defaultTrack
-                    list = session.layout(options: LayoutOptions(track: track, width: width, scale: scale, showRhythm: showRhythm))
+                    var options = options
+                    options.track = track
+                    list = session.layout(options: options)
                 }
                 return .success(Opened(session: session, info: info, state: state, playedBars: bars, videos: videos,
                                        list: list,
@@ -359,7 +372,7 @@ final class TabViewerModel {
         guard let session, viewportWidth > 0 else { return }
         layoutGeneration += 1
         let generation = layoutGeneration
-        let options = LayoutOptions(track: track, width: viewportWidth, scale: scale, showRhythm: showRhythm)
+        let options = layoutOptions(track: track)
         let state = ViewerLog.signposter.beginInterval("layout")
         Task {
             let (list, ms) = await worker.layout(session, options)
@@ -407,9 +420,46 @@ final class TabViewerModel {
         relayout(anchor: nil)
     }
 
+    private func layoutOptions(track: UInt32) -> LayoutOptions {
+        LayoutOptions(track: track, width: viewportWidth, scale: scale, showRhythm: showRhythm,
+                      showSections: showSections, showTempo: showTempo,
+                      showBarNumbers: showBarNumbers, showAnnotations: showAnnotations,
+                      barsPerRow: barsPerRow)
+    }
+
     func setShowRhythm(_ on: Bool) {
         guard on != showRhythm else { return }
         showRhythm = on
+        relayout(anchor: nil)
+    }
+
+    func setShowSections(_ on: Bool) {
+        guard on != showSections else { return }
+        showSections = on
+        relayout(anchor: nil)
+    }
+
+    func setShowTempo(_ on: Bool) {
+        guard on != showTempo else { return }
+        showTempo = on
+        relayout(anchor: nil)
+    }
+
+    func setShowBarNumbers(_ on: Bool) {
+        guard on != showBarNumbers else { return }
+        showBarNumbers = on
+        relayout(anchor: nil)
+    }
+
+    func setShowAnnotations(_ on: Bool) {
+        guard on != showAnnotations else { return }
+        showAnnotations = on
+        relayout(anchor: nil)
+    }
+
+    func setBarsPerRow(_ count: UInt32) {
+        guard count != barsPerRow else { return }
+        barsPerRow = count
         relayout(anchor: nil)
     }
 

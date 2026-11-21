@@ -72,6 +72,11 @@ fn bench(c: &mut Criterion) {
         width: 1200.0,
         scale: 1.0,
         show_rhythm: true,
+        show_sections: true,
+        show_tempo: true,
+        show_bar_numbers: true,
+        show_annotations: true,
+        bars_per_row: 0,
     };
     c.bench_function("layout 300 bars", |b| {
         b.iter(|| layout::layout(black_box(&score), black_box(&options)))

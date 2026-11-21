@@ -141,6 +141,11 @@ fn config_round_trips_through_core() {
     let config = Config {
         scale: 1.75,
         show_rhythm: false,
+        show_sections: false,
+        show_tempo: false,
+        show_bar_numbers: false,
+        show_annotations: false,
+        bars_per_row: 4,
         watched_folders: vec![dir.path().join("nowhere").to_string_lossy().into_owned()],
         follow_cursor: false,
         preferred_instrument: Some(Instrument::Bass),

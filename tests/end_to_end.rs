@@ -66,6 +66,11 @@ fn run_pipeline(path: &str) {
         width: 900.0,
         scale: 1.0,
         show_rhythm: true,
+        show_sections: true,
+        show_tempo: true,
+        show_bar_numbers: true,
+        show_annotations: true,
+        bars_per_row: 0,
     });
     assert!(!list.systems.is_empty());
 
@@ -171,6 +176,11 @@ fn cursor_glides_into_the_next_bar() {
         width: 900.0,
         scale: 1.0,
         show_rhythm: true,
+        show_sections: true,
+        show_tempo: true,
+        show_bar_numbers: true,
+        show_annotations: true,
+        bars_per_row: 0,
     });
     let bars = session.played_bars();
     assert!(bars.len() >= 3);

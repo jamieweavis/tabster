@@ -134,6 +134,11 @@ fn exercise(score: &Score, budget: Elapsed) {
                     width,
                     scale: 1.0,
                     show_rhythm: true,
+                    show_sections: true,
+                    show_tempo: true,
+                    show_bar_numbers: true,
+                    show_annotations: true,
+                    bars_per_row: 0,
                 },
             );
             assert!(list.height.is_finite());
@@ -242,6 +247,11 @@ fn sixty_fourth_tuplets_everywhere_layout_is_bounded() {
         width: 1200.0,
         scale: 1.0,
         show_rhythm: true,
+        show_sections: true,
+        show_tempo: true,
+        show_bar_numbers: true,
+        show_annotations: true,
+        bars_per_row: 0,
     };
     let _ = layout::layout(&s, &opts);
     let start = Instant::now();
@@ -391,6 +401,11 @@ fn layout_with_hostile_options() {
                 width,
                 scale,
                 show_rhythm: true,
+                show_sections: true,
+                show_tempo: true,
+                show_bar_numbers: true,
+                show_annotations: true,
+                bars_per_row: 0,
             },
         );
         let _ = layout::cursor(&list, 3, 100, 3840);

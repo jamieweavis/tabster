@@ -61,7 +61,9 @@ final class AppModel {
     // MARK: Settings
 
     /// Mirrors the core's config (`~/.config/tabster.toml`); change it through `updateConfig`.
-    private(set) var config = Config(scale: 1.0, showRhythm: true, watchedFolders: [], followCursor: true,
+    private(set) var config = Config(scale: 1.0, showRhythm: true, showSections: true, showTempo: true,
+                                         showBarNumbers: true, showAnnotations: true, barsPerRow: 0,
+                                         watchedFolders: [], followCursor: true,
                                          preferredInstrument: nil, autoFindVideos: true, autoAttachVideos: true)
 
     @ObservationIgnored private var query = ""

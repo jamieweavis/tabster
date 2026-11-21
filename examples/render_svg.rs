@@ -16,6 +16,11 @@ fn main() {
         width: rest.first().map_or(1000.0, |w| w.parse().expect("width")),
         scale: 1.0,
         show_rhythm: true,
+        show_sections: true,
+        show_tempo: true,
+        show_bar_numbers: true,
+        show_annotations: true,
+        bars_per_row: 0,
     };
     let list = tabster_core::layout::layout(&score, &options);
     std::fs::write(out, tabster_core::layout::svg::to_svg(&list)).expect("write svg");

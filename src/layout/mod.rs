@@ -27,6 +27,16 @@ pub struct LayoutOptions {
     pub scale: f32,
     /// Draw rhythm stems/beams below the tab staff.
     pub show_rhythm: bool,
+    /// Draw section labels ("Intro", "Chorus" …) above the bars they start.
+    pub show_sections: bool,
+    /// Draw tempo markings ("♩ = 120": the initial tempo and every change).
+    pub show_tempo: bool,
+    /// Number the first bar of each system.
+    pub show_bar_numbers: bool,
+    /// Draw the tab's free-text annotations (beat text, e.g. "Overdub, he plays …").
+    pub show_annotations: bool,
+    /// Bars on each line (a multi-bar rest counts as one); 0 = as many as fit the width.
+    pub bars_per_row: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]

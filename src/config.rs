@@ -17,6 +17,16 @@ pub struct Config {
     /// Layout zoom.
     pub scale: f32,
     pub show_rhythm: bool,
+    /// Section labels ("Intro", "Chorus" …) above the tab.
+    pub show_sections: bool,
+    /// Tempo markings ("♩ = 120") above the tab.
+    pub show_tempo: bool,
+    /// The bar number at the start of each line.
+    pub show_bar_numbers: bool,
+    /// Free-text annotations written on the tab.
+    pub show_annotations: bool,
+    /// Bars on each line of the tab; 0 = as many as fit.
+    pub bars_per_row: u32,
     /// Folders watched for new tab files to import automatically.
     pub watched_folders: Vec<String>,
     /// Keep the tab scrolled so the cursor stays in view.
@@ -34,6 +44,11 @@ impl Default for Config {
         Self {
             scale: 1.0,
             show_rhythm: true,
+            show_sections: true,
+            show_tempo: true,
+            show_bar_numbers: true,
+            show_annotations: true,
+            bars_per_row: 0,
             watched_folders: Vec::new(),
             follow_cursor: true,
             preferred_instrument: None,
@@ -238,6 +253,11 @@ mod tests {
         std::fs::write(&path, "scale = 2.0\n").unwrap();
         assert_eq!(load(&path).scale, 2.0);
         assert!(load(&path).show_rhythm);
+        assert!(load(&path).show_sections);
+        assert!(load(&path).show_tempo);
+        assert!(load(&path).show_bar_numbers);
+        assert!(load(&path).show_annotations);
+        assert_eq!(load(&path).bars_per_row, 0);
         assert_eq!(load(&path).preferred_instrument, None);
         let bass = Config {
             preferred_instrument: Some(Instrument::Bass),

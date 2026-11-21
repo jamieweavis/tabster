@@ -102,6 +102,11 @@ fn opts(width: f32) -> LayoutOptions {
         width,
         scale: 1.0,
         show_rhythm: true,
+        show_sections: true,
+        show_tempo: true,
+        show_bar_numbers: true,
+        show_annotations: true,
+        bars_per_row: 0,
     }
 }
 
@@ -1231,4 +1236,124 @@ fn snapshot_rests_and_ties() {
     }
     let list = layout(&score, &opts(500.0));
     insta::assert_debug_snapshot!(rounded(&list));
+}
+
+#[test]
+fn sections_and_tempo_can_be_hidden() {
+    let mut score = simple(8);
+    score.master_bars[0].section = Some(Section {
+        letter: String::new(),
+        text: "Intro".into(),
+    });
+    score.master_bars[4].section = Some(Section {
+        letter: String::new(),
+        text: "Chorus".into(),
+    });
+    score.tempo_changes = vec![TempoChange {
+        bar: 4,
+        position: 0.0,
+        bpm: 90.0,
+    }];
+    let shown = |list: &DisplayList, label: &str| texts(list).iter().any(|t| t.2 == label);
+    let tempo = |list: &DisplayList| texts(list).iter().any(|t| t.2.starts_with("♩ ="));
+
+    let all = layout(&score, &opts(800.0));
+    assert!(shown(&all, "Intro") && shown(&all, "Chorus") && tempo(&all));
+
+    let no_sections = layout(
+        &score,
+        &LayoutOptions {
+            show_sections: false,
+            ..opts(800.0)
+        },
+    );
+    check_invariants(&score, &no_sections);
+    assert!(!shown(&no_sections, "Intro") && !shown(&no_sections, "Chorus"));
+    assert!(tempo(&no_sections));
+    assert!(no_sections.height < all.height);
+
+    let no_tempo = layout(
+        &score,
+        &LayoutOptions {
+            show_tempo: false,
+            ..opts(800.0)
+        },
+    );
+    check_invariants(&score, &no_tempo);
+    assert!(!tempo(&no_tempo));
+    assert!(shown(&no_tempo, "Intro"));
+    assert!(no_tempo.height < all.height);
+}
+
+#[test]
+fn bar_numbers_and_annotations_can_be_hidden() {
+    let mut score = simple(16);
+    score.tracks[0].bars[2].voices[0].beats[0].text = Some("Overdub".into());
+    let has = |list: &DisplayList, label: &str| texts(list).iter().any(|t| t.2 == label);
+
+    let all = layout(&score, &opts(600.0));
+    assert!(has(&all, "Overdub"));
+
+    let no_numbers = layout(
+        &score,
+        &LayoutOptions {
+            show_bar_numbers: false,
+            ..opts(600.0)
+        },
+    );
+    check_invariants(&score, &no_numbers);
+    // One number per system gone, nothing else.
+    assert!(no_numbers.systems.len() > 1);
+    assert_eq!(
+        texts(&all).len() - texts(&no_numbers).len(),
+        no_numbers.systems.len()
+    );
+    assert!(has(&no_numbers, "Overdub"));
+
+    let no_text = layout(
+        &score,
+        &LayoutOptions {
+            show_annotations: false,
+            ..opts(600.0)
+        },
+    );
+    check_invariants(&score, &no_text);
+    assert!(!has(&no_text, "Overdub"));
+    assert!(no_text.height < all.height);
+}
+
+#[test]
+fn fixed_bars_per_row() {
+    let score = simple(10);
+    for (per_row, width) in [(1, 800.0), (4, 800.0), (4, 300.0), (8, 1600.0)] {
+        let list = layout(
+            &score,
+            &LayoutOptions {
+                bars_per_row: per_row,
+                ..opts(width)
+            },
+        );
+        check_invariants(&score, &list);
+        let counts: Vec<usize> = list.systems.iter().map(|s| s.bars.len()).collect();
+        let n = per_row as usize;
+        assert_eq!(
+            counts.len(),
+            10_usize.div_ceil(n),
+            "{per_row} per row: {counts:?}"
+        );
+        assert!(
+            counts[..counts.len() - 1].iter().all(|&c| c == n),
+            "{counts:?}"
+        );
+        // Equal widths, the short last line's bars included.
+        let widths: Vec<f32> = list
+            .systems
+            .iter()
+            .flat_map(|s| s.bars.iter().map(|b| b.frame.width))
+            .collect();
+        assert!(
+            widths.iter().all(|w| (w - widths[0]).abs() < 0.5),
+            "{per_row} per row at {width}: {widths:?}"
+        );
+    }
 }

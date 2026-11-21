@@ -61,6 +61,15 @@ private struct GeneralSettings: View {
             Section("Viewer") {
                 Toggle("Follow the cursor while playing", isOn: configBinding(\.followCursor))
                 Toggle("Show rhythm notation", isOn: configBinding(\.showRhythm))
+                Toggle("Show section labels", isOn: configBinding(\.showSections))
+                Toggle("Show tempo markings", isOn: configBinding(\.showTempo))
+                Toggle("Show bar numbers", isOn: configBinding(\.showBarNumbers))
+                Toggle("Show text notes", isOn: configBinding(\.showAnnotations))
+                Picker("Bars per row", selection: configBinding(\.barsPerRow)) {
+                    ForEach(TabViewer.barsPerRowChoices, id: \.self) { count in
+                        Text(TabViewer.barsPerRowLabel(count)).tag(count)
+                    }
+                }
                 Picker("Open new tabs on", selection: configBinding(\.preferredInstrument)) {
                     Text("First track").tag(Instrument?.none)
                     ForEach(Self.instruments, id: \.0) { instrument, name in

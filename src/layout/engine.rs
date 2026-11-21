@@ -144,6 +144,12 @@ struct Ctx<'a> {
     preps: Vec<Prep>,
     tempo: Vec<TempoMark>,
     rhythm: bool,
+    /// Section labels are drawn (they also keep multi-bar rests apart).
+    sections: bool,
+    bar_numbers: bool,
+    annotations: bool,
+    /// Fixed bars per line (each gets an equal share of the width); 0 = as many as fit.
+    per_row: usize,
     /// A pitched track with nothing to show as tab (no tuning, or no note on a real string).
     no_tab: bool,
 }
@@ -162,6 +168,19 @@ impl Ctx<'_> {
     /// Whether the bar at `i` continues a multi-bar rest (laid out by the run's first bar).
     fn in_run(&self, i: usize) -> bool {
         self.preps.get(i).is_some_and(|p| p.run == 0)
+    }
+
+    /// The section starting at `bar`, if sections are drawn.
+    fn section(&self, bar: usize) -> Option<&Section> {
+        if !self.sections {
+            return None;
+        }
+        self.score.master_bars.get(bar)?.section.as_ref()
+    }
+
+    /// A beat's free text, if annotations are drawn.
+    fn beat_text<'b>(&self, beat: &'b Beat) -> Option<&'b str> {
+        beat.text.as_deref().filter(|_| self.annotations)
     }
 
     fn tempo_in(&self, bar: usize) -> &[TempoMark] {
@@ -191,8 +210,16 @@ pub(super) fn layout(score: &Score, options: &LayoutOptions) -> DisplayList {
         track,
         m,
         preps: Vec::new(),
-        tempo: tempo_marks(score),
+        tempo: if options.show_tempo {
+            tempo_marks(score)
+        } else {
+            Vec::new()
+        },
         rhythm: options.show_rhythm,
+        sections: options.show_sections,
+        bar_numbers: options.show_bar_numbers,
+        annotations: options.show_annotations,
+        per_row: options.bars_per_row as usize,
         no_tab,
     };
     let mut preps: Vec<Prep> = (0..score.master_bars.len())
@@ -203,7 +230,10 @@ pub(super) fn layout(score: &Score, options: &LayoutOptions) -> DisplayList {
     ctx.preps = preps;
 
     let avail = (options.width - 2.0 * ctx.m.margin - ctx.m.clef_w).max(40.0 * s);
-    let ranges = break_lines(&ctx.preps, avail);
+    let ranges = match ctx.per_row {
+        0 => break_lines(&ctx.preps, avail),
+        n => break_every(&ctx.preps, n),
+    };
     let mut systems = Vec::with_capacity(ranges.len());
     let mut y = 0.0;
     for (k, range) in ranges.iter().enumerate() {
@@ -251,7 +281,7 @@ fn group_rests(ctx: &Ctx, preps: &mut [Prep]) {
     let joins = |j: usize| {
         let (mb, prev) = (&mbs[j], &mbs[j - 1]);
         preps[j].rest_only
-            && mb.section.is_none()
+            && ctx.section(j).is_none()
             && !mb.repeat_start
             && !preps[j].time_sig
             && mb.directions.is_empty()
@@ -357,9 +387,9 @@ fn measure(ctx: &Ctx, i: usize) -> Prep {
     };
 
     let rest_only = !bar.voices.iter().any(|v| {
-        v.beats
-            .iter()
-            .any(|b| b.chord.is_some() || b.text.is_some() || b.notes.iter().any(|n| ctx.shown(n)))
+        v.beats.iter().any(|b| {
+            b.chord.is_some() || ctx.beat_text(b).is_some() || b.notes.iter().any(|n| ctx.shown(n))
+        })
     });
     // Rest-only bars are compact: a whole-bar rest needs little room.
     let (base, per_halving) = if rest_only { (8.0, 3.0) } else { (14.0, 6.0) };
@@ -376,7 +406,7 @@ fn measure(ctx: &Ctx, i: usize) -> Prep {
     // Labels drawn from the bar's start must fit over it (rest-only bars are narrow).
     let mut min_w: f32 = 0.0;
     let mut lanes = 0;
-    if let Some(sec) = &mb.section {
+    if let Some(sec) = ctx.section(i) {
         lanes |= L_SECTION;
         min_w = text_width(section_label_len(sec), 11.0 * m.s) + 12.0 * m.s;
     }
@@ -404,7 +434,7 @@ fn measure(ctx: &Ctx, i: usize) -> Prep {
             let col = onsets.binary_search(&t).unwrap_or(0);
             let onset = t;
             t += beat.duration.ticks();
-            if beat.chord.is_some() || beat.text.is_some() {
+            if beat.chord.is_some() || ctx.beat_text(beat).is_some() {
                 lanes |= L_CHORD;
             }
             if ctx.track.is_percussion {
@@ -515,6 +545,25 @@ fn break_lines(preps: &[Prep], avail: f32) -> Vec<Range<usize>> {
             acc = 0.0;
         }
         acc += w;
+    }
+    ranges.push(start..preps.len());
+    ranges
+}
+
+/// Lines of `per_line` bars each (the last may be shorter); a multi-bar rest counts as one bar.
+/// Each line is then justified to the width, squeezing its bars if they don't fit.
+fn break_every(preps: &[Prep], per_line: usize) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let (mut start, mut count) = (0, 0);
+    for (i, p) in preps.iter().enumerate() {
+        if p.run == 0 {
+            continue;
+        }
+        if count == per_line {
+            ranges.push(start..i);
+            (start, count) = (i, 0);
+        }
+        count += 1;
     }
     ranges.push(start..preps.len());
     ranges
@@ -689,6 +738,10 @@ fn emit_system(ctx: &Ctx, range: Range<usize>, top: f32, avail: f32, last: bool)
         }
     }
     let (f, fr) = justify(avail - fixed, busy, rests, last);
+    // With a fixed count per line, every bar (or multi-bar rest) gets the same width, the last
+    // line's too: what's left after its fixed decorations goes to its columns.
+    let slot = (ctx.per_row > 0).then(|| avail / ctx.per_row as f32);
+    let content_w = |p: &Prep, w: f32| (w - p.left - p.right).max(m.s);
 
     let frame_y = rows.staff_top - m.ls / 2.0;
     let frame_h = m.staff_h + m.ls;
@@ -704,7 +757,11 @@ fn emit_system(ctx: &Ctx, range: Range<usize>, top: f32, avail: f32, last: bool)
         match p.run {
             0 => {} // Laid out with its multi-bar rest.
             1 => {
-                let f = if p.rest_only { fr } else { f };
+                let f = match slot {
+                    Some(w) => content_w(p, w) / p.cols.max(f32::EPSILON),
+                    None if p.rest_only => fr,
+                    None => f,
+                };
                 let mut cx = x + p.left;
                 let beats = p
                     .onsets
@@ -733,7 +790,10 @@ fn emit_system(ctx: &Ctx, range: Range<usize>, top: f32, avail: f32, last: bool)
                 // bar; each slice's only onset sits at its left edge.
                 let n = n as usize;
                 let content = x + p.left;
-                let per = p.cols * fr / n as f32;
+                let per = match slot {
+                    Some(w) => content_w(p, w) / n as f32,
+                    None => p.cols * fr / n as f32,
+                };
                 let nudge = (per * 0.05).min(0.5 * m.s);
                 for k in 0..n {
                     let (x0, onset) = if k == 0 {
@@ -863,7 +923,7 @@ impl SystemEmitter<'_> {
         }
 
         // Bar number.
-        if let Some(bar) = self.bars.first() {
+        if let Some(bar) = self.bars.first().filter(|_| self.ctx.bar_numbers) {
             self.out.text(
                 left,
                 r.staff_top - 5.0 * s,
@@ -915,7 +975,7 @@ impl SystemEmitter<'_> {
         }
 
         // Section label.
-        if let Some(sec) = &mb.section {
+        if let Some(sec) = self.ctx.section(i) {
             let label = match (sec.letter.is_empty(), sec.text.is_empty()) {
                 (false, false) => format!("{} · {}", sec.letter, sec.text),
                 (true, _) => sec.text.clone(),
@@ -1295,7 +1355,7 @@ impl SystemEmitter<'_> {
                     Ink::Primary,
                 );
             }
-            if let Some(text) = &beat.text {
+            if let Some(text) = ctx.beat_text(beat) {
                 let x = if beat.chord.is_some() {
                     x + 10.0 * s
                 } else {
@@ -1304,7 +1364,7 @@ impl SystemEmitter<'_> {
                 self.out.text(
                     x,
                     r.chord + 11.0 * s,
-                    text.as_str(),
+                    text,
                     10.0 * s,
                     ITALIC,
                     TextAnchor::Leading,

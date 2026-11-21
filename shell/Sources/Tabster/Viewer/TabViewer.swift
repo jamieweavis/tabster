@@ -120,6 +120,21 @@ struct TabViewer: View {
         .onChange(of: app?.config.showRhythm) { _, on in
             if let on { model.setShowRhythm(on) }
         }
+        .onChange(of: app?.config.showSections) { _, on in
+            if let on { model.setShowSections(on) }
+        }
+        .onChange(of: app?.config.showTempo) { _, on in
+            if let on { model.setShowTempo(on) }
+        }
+        .onChange(of: app?.config.showBarNumbers) { _, on in
+            if let on { model.setShowBarNumbers(on) }
+        }
+        .onChange(of: app?.config.showAnnotations) { _, on in
+            if let on { model.setShowAnnotations(on) }
+        }
+        .onChange(of: app?.config.barsPerRow) { _, count in
+            if let count { model.setBarsPerRow(count) }
+        }
         .onChange(of: app?.config.followCursor) { _, on in
             if let on { model.followCursor = on }
         }
@@ -279,6 +294,21 @@ private struct ViewerToolbar: ToolbarContent {
             rhythmToggle
         }
         ToolbarItem(placement: .primaryAction) {
+            sectionsToggle
+        }
+        ToolbarItem(placement: .primaryAction) {
+            tempoToggle
+        }
+        ToolbarItem(placement: .primaryAction) {
+            barNumbersToggle
+        }
+        ToolbarItem(placement: .primaryAction) {
+            annotationsToggle
+        }
+        ToolbarItem(placement: .primaryAction) {
+            barDisplayMenu
+        }
+        ToolbarItem(placement: .primaryAction) {
             zoomButtons
         }
     }
@@ -337,25 +367,53 @@ private struct ViewerToolbar: ToolbarContent {
         .help("Scroll to follow the playhead while playing")
     }
 
-    /// Writes Preferences (`Config::show_rhythm`), so it stays in step with the Settings toggle;
-    /// `TabViewer` relays the change to the model.
     private var rhythmToggle: some View {
+        configToggle("Show Rhythm", systemImage: "music.note", help: "Show rhythm notation",
+                     key: \.showRhythm, local: model.showRhythm, setLocal: model.setShowRhythm)
+    }
+
+    private var sectionsToggle: some View {
+        configToggle("Show Sections", systemImage: "flag", help: "Show section labels (Intro, Verse, Chorus …)",
+                     key: \.showSections, local: model.showSections, setLocal: model.setShowSections)
+    }
+
+    private var tempoToggle: some View {
+        configToggle("Show Tempo", systemImage: "metronome", help: "Show tempo markings and changes",
+                     key: \.showTempo, local: model.showTempo, setLocal: model.setShowTempo)
+    }
+
+    private var barNumbersToggle: some View {
+        configToggle("Show Bar Numbers", systemImage: "number", help: "Show bar numbers",
+                     key: \.showBarNumbers, local: model.showBarNumbers, setLocal: model.setShowBarNumbers)
+    }
+
+    private var annotationsToggle: some View {
+        configToggle("Show Text Notes", systemImage: "text.bubble", help: "Show text notes written on the tab",
+                     key: \.showAnnotations, local: model.showAnnotations, setLocal: model.setShowAnnotations)
+    }
+
+    /// A toolbar toggle that writes Preferences, so it stays in step with the Settings toggle;
+    /// `TabViewer` relays the change to the model. In the debug harness (no app) it sets the model.
+    private func configToggle(
+        _ title: String, systemImage: String, help: String,
+        key: WritableKeyPath<Config, Bool>, local: Bool, setLocal: @escaping (Bool) -> Void
+    ) -> some View {
         Toggle(isOn: Binding(
-            get: { app?.config.showRhythm ?? model.showRhythm },
+            get: { app?.config[keyPath: key] ?? local },
             set: { on in
                 if let app {
                     var config = app.config
-                    config.showRhythm = on
+                    config[keyPath: key] = on
                     app.updateConfig(config)
                 } else {
-                    model.setShowRhythm(on)
+                    setLocal(on)
                 }
             }
         )) {
-            Label("Show Rhythm", systemImage: "music.note")
+            Label(title, systemImage: systemImage)
         }
         .toggleStyle(.button)
-        .help("Show rhythm notation")
+        .help(help)
     }
 
     /// Always present (disabled when the tab has no sections) so the toolbar never re-tiles.
@@ -378,6 +436,33 @@ private struct ViewerToolbar: ToolbarContent {
         .padding(.horizontal, 6)
         .help("Jump to or loop a section")
         .disabled(sections.isEmpty)
+    }
+
+    /// Bars per row: Auto (as many as fit) or a fixed count. Writes Preferences, like the toggles.
+    private var barDisplayMenu: some View {
+        let current = app?.config.barsPerRow ?? model.barsPerRow
+        return Menu {
+                Picker("Bar Display", selection: Binding(
+                    get: { current },
+                    set: { count in
+                        if let app {
+                            var config = app.config
+                            config.barsPerRow = count
+                            app.updateConfig(config)
+                        } else {
+                            model.setBarsPerRow(count)
+                        }
+                    }
+                )) {
+                    ForEach(TabViewer.barsPerRowChoices, id: \.self) { count in
+                        Text(TabViewer.barsPerRowLabel(count)).tag(count)
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Label("Bar Display", systemImage: "rectangle.split.3x1")
+            }
+            .help("Bar display: bars per row (\(TabViewer.barsPerRowLabel(current)))")
     }
 
     private var trackMenu: some View {
@@ -406,6 +491,17 @@ private struct ViewerToolbar: ToolbarContent {
 }
 
 extension TabViewer {
+    /// The Bar Display choices: 0 = Auto.
+    static let barsPerRowChoices: [UInt32] = [0, 1, 2, 3, 4, 5, 6, 8]
+
+    static func barsPerRowLabel(_ count: UInt32) -> String {
+        switch count {
+        case 0: "Auto"
+        case 1: "1 Bar per Row"
+        default: "\(count) Bars per Row"
+        }
+    }
+
     /// Built in the core, e.g. "Bass · E A D G" or "Guitar 2 · E A D G B E · capo 2".
     static func trackLabel(_ track: TrackInfo) -> String { track.label }
 
